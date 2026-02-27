@@ -47,7 +47,7 @@ export default function MissionsPage() {
   const [createOpen, setCreateOpen] = useState(false);
 
   const missionsQuery = useAuthedQuery<Mission[]>(["missions", siteId], `/missions?site_id=${siteId}`);
-  const robotsQuery = useAuthedQuery<Robot[]>(["robots", siteId], `/robots?site_id=${siteId}`);
+  const robotsQuery = useAuthedQuery<Robot[]>(["robots-last-state", siteId], `/robots/last_state?site_id=${siteId}`);
 
   const createMissionMutation = useAuthedMutation<Mission>();
 

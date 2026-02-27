@@ -16,6 +16,8 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - Ingestion events, dead letters, analytics rollups, alerts model, role scope overrides, Timescale setup SQL.
 - `20260227180000_v1_phase1_canonical_envelope`
   - Canonical envelope enums/model (`CanonicalMessage`) and ingestion linkage.
+- `20260227220000_v1_phase2_robot_last_state`
+  - Read-model tables: `RobotLastState`, `SiteSetting` with backfill from `Robot`.
 
 ## Core Domain Models
 - Tenant context: `Tenant`, `User`, `Site`, `Floorplan`, `Zone`.
@@ -58,6 +60,22 @@ Primary schema file: `apps/api/prisma/schema.prisma`
     - `(tenantId, sourceId, timestamp)`
 - `IngestionEvent.canonicalMessageId`
   - Optional linkage to canonical persisted message.
+
+## V1 Phase 2 Read-Model Models
+- `RobotLastState`
+  - Composite primary key: `(tenantId, siteId, robotId)`.
+  - Contains last reported robot pose/state/task/health fields for read-time fanout.
+  - Indexed for filtering and freshness:
+    - `(tenantId, siteId, status)`
+    - `(tenantId, siteId, vendor)`
+    - `(tenantId, siteId, floorplanId)`
+    - `(tenantId, siteId, updatedAt)`
+- `SiteSetting`
+  - Composite primary key: `(tenantId, siteId)`.
+  - Defaults:
+    - `robotOfflineAfterSeconds = 15`
+    - `robotStatePublishPeriodSeconds = 2`
+  - Used for offline-status computation and robot broadcast cadence defaults.
 
 ## Key Indexes (Operational)
 - Telemetry query/read-path:
@@ -111,3 +129,4 @@ Seed script (`apps/api/prisma/seed.ts`) is idempotent and includes:
 - Saved views/defaults and dashboard configs.
 - Rollup and alerting-related fixtures.
 - Canonical envelope fixtures for all 3 `message_type` values and an invalid dead-letter scenario.
+- V1 read-model fixtures: per-site `SiteSetting` defaults and seeded `RobotLastState` rows.

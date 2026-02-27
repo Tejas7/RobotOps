@@ -49,12 +49,23 @@ interface AnalyticsQuery {
   use_rollups?: boolean;
 }
 
+interface EffectiveRobotState {
+  robotId: string;
+  siteId: string;
+  name: string;
+  status: string;
+  reportedStatus: string;
+  isOfflineComputed: boolean;
+}
+
 const SEVERITY_ORDER: Record<string, number> = {
   info: 1,
   warning: 2,
   major: 3,
   critical: 4
 };
+
+const DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS = 15;
 
 @Injectable()
 export class Phase3Service implements OnModuleInit, OnModuleDestroy {
@@ -285,13 +296,8 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     const window = this.parseWindow(parsed.data.from, parsed.data.to);
     const selectedSiteIds = await this.resolveSiteIds(tenantId, parsed.data.site_id, parsed.data.site_ids);
 
-    const [robots, missions, incidents] = await Promise.all([
-      this.prisma.robot.findMany({
-        where: {
-          tenantId,
-          siteId: { in: selectedSiteIds }
-        }
-      }),
+    const [effectiveRobots, missions, incidents] = await Promise.all([
+      this.listEffectiveRobotStates(tenantId, selectedSiteIds),
       this.prisma.mission.findMany({
         where: {
           tenantId,
@@ -361,13 +367,13 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     }
 
     const windowHours = Math.max(1, (window.to.getTime() - window.from.getTime()) / (1000 * 60 * 60));
-    const utilizationByRobot = robots.map((robot) => {
+    const utilizationByRobot = effectiveRobots.map((robot) => {
       const totalMissionSeconds = missions
-        .filter((mission) => mission.assignedRobotId === robot.id)
+        .filter((mission) => mission.assignedRobotId === robot.robotId)
         .reduce((sum, mission) => sum + mission.durationS, 0);
       const utilizationPercent = Math.min(100, (totalMissionSeconds / (windowHours * 3600)) * 100);
       return {
-        robotId: robot.id,
+        robotId: robot.robotId,
         name: robot.name,
         utilizationPercent: Math.round(utilizationPercent),
         idlePercent: Math.max(0, Math.round(100 - utilizationPercent))
@@ -375,12 +381,14 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     });
 
     const openIncidents = incidents.filter((incident) => incident.status !== "resolved").length;
-    const uptimePercent = robots.length ? Math.round((robots.filter((robot) => robot.status === "online").length / robots.length) * 100) : 0;
+    const uptimePercent = effectiveRobots.length
+      ? Math.round((effectiveRobots.filter((robot) => robot.status === "online").length / effectiveRobots.length) * 100)
+      : 0;
 
     const bySite = selectedSiteIds.map((siteId) => {
       const siteMissions = missions.filter((mission) => mission.siteId === siteId);
       const siteIncidents = incidents.filter((incident) => incident.siteId === siteId && incident.status !== "resolved");
-      const siteRobots = robots.filter((robot) => robot.siteId === siteId);
+      const siteRobots = effectiveRobots.filter((robot) => robot.siteId === siteId);
       const siteInterventions = siteMissions.reduce((sum, mission) => sum + mission.interventionsCount, 0);
       const siteUptime = siteRobots.length
         ? Math.round((siteRobots.filter((robot) => robot.status === "online").length / siteRobots.length) * 100)
@@ -404,7 +412,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       },
       selectedSites: selectedSiteIds,
       kpis: {
-        fleetSize: robots.length,
+        fleetSize: effectiveRobots.length,
         uptimePercent,
         missionsTotal: missionCount,
         missionsSucceeded: succeededMissions,
@@ -1345,63 +1353,151 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       throw new Error("Robot not found for robot_state");
     }
 
-    const updateData: Prisma.RobotUpdateInput = {
-      lastSeenAt: new Date(envelope.timestamp)
-    };
+    const seenAt = new Date(envelope.timestamp);
+    const existingLastState = await this.prisma.robotLastState.findUnique({
+      where: {
+        tenantId_siteId_robotId: {
+          tenantId,
+          siteId: envelope.site_id,
+          robotId: envelope.entity.robot_id
+        }
+      }
+    });
 
-    if (payload.status) {
-      updateData.status = payload.status;
-    }
-    if (payload.battery_percent !== undefined) {
-      updateData.batteryPercent = Math.round(payload.battery_percent);
-    }
-    if (payload.pose) {
-      updateData.x = payload.pose.x;
-      updateData.y = payload.pose.y;
-      updateData.headingDegrees = payload.pose.heading_degrees ?? robot.headingDegrees;
-      if (payload.pose.confidence !== undefined) {
-        updateData.confidence = payload.pose.confidence;
-      }
-      if (payload.pose.floorplan_id) {
-        updateData.floorplanId = payload.pose.floorplan_id;
-      }
-    }
-    if (payload.telemetry) {
-      if (payload.telemetry.cpu_percent !== undefined) {
-        updateData.cpuPercent = Math.round(payload.telemetry.cpu_percent);
-      }
-      if (payload.telemetry.memory_percent !== undefined) {
-        updateData.memoryPercent = Math.round(payload.telemetry.memory_percent);
-      }
-      if (payload.telemetry.temp_c !== undefined) {
-        updateData.tempC = Math.round(payload.telemetry.temp_c);
-      }
-      if (payload.telemetry.disk_percent !== undefined) {
-        updateData.diskPercent = Math.round(payload.telemetry.disk_percent);
-      }
-      if (payload.telemetry.network_rssi !== undefined) {
-        updateData.networkRssi = Math.round(payload.telemetry.network_rssi);
-      }
-    }
-    if (payload.metrics?.battery !== undefined && payload.battery_percent === undefined) {
-      updateData.batteryPercent = Math.round(payload.metrics.battery);
-    }
-    if (payload.metrics?.cpu_percent !== undefined && payload.telemetry?.cpu_percent === undefined) {
-      updateData.cpuPercent = Math.round(payload.metrics.cpu_percent);
-    }
-    if (payload.metrics?.temp_c !== undefined && payload.telemetry?.temp_c === undefined) {
-      updateData.tempC = Math.round(payload.metrics.temp_c);
-    }
-    if (payload.metrics?.disk_percent !== undefined && payload.telemetry?.disk_percent === undefined) {
-      updateData.diskPercent = Math.round(payload.metrics.disk_percent);
-    }
-    if (payload.metrics?.network_rssi !== undefined && payload.telemetry?.network_rssi === undefined) {
-      updateData.networkRssi = Math.round(payload.metrics.network_rssi);
-    }
+    const status = payload.status ?? existingLastState?.status ?? robot.status;
+    const batteryPercent =
+      payload.battery_percent !== undefined
+        ? Math.round(payload.battery_percent)
+        : payload.metrics?.battery !== undefined
+          ? Math.round(payload.metrics.battery)
+          : existingLastState?.batteryPercent ?? robot.batteryPercent;
+    const floorplanId = payload.pose?.floorplan_id ?? existingLastState?.floorplanId ?? robot.floorplanId;
+    const x = payload.pose?.x ?? existingLastState?.x ?? robot.x;
+    const y = payload.pose?.y ?? existingLastState?.y ?? robot.y;
+    const headingDegrees = payload.pose?.heading_degrees ?? existingLastState?.headingDegrees ?? robot.headingDegrees;
+    const confidence = payload.pose?.confidence ?? existingLastState?.confidence ?? robot.confidence;
+    const cpuPercent =
+      payload.telemetry?.cpu_percent !== undefined
+        ? Math.round(payload.telemetry.cpu_percent)
+        : payload.metrics?.cpu_percent !== undefined
+          ? Math.round(payload.metrics.cpu_percent)
+          : existingLastState?.cpuPercent ?? robot.cpuPercent;
+    const memoryPercent =
+      payload.telemetry?.memory_percent !== undefined
+        ? Math.round(payload.telemetry.memory_percent)
+        : existingLastState?.memoryPercent ?? robot.memoryPercent;
+    const tempC =
+      payload.telemetry?.temp_c !== undefined
+        ? Math.round(payload.telemetry.temp_c)
+        : payload.metrics?.temp_c !== undefined
+          ? Math.round(payload.metrics.temp_c)
+          : existingLastState?.tempC ?? robot.tempC;
+    const diskPercent =
+      payload.telemetry?.disk_percent !== undefined
+        ? Math.round(payload.telemetry.disk_percent)
+        : payload.metrics?.disk_percent !== undefined
+          ? Math.round(payload.metrics.disk_percent)
+          : existingLastState?.diskPercent ?? robot.diskPercent;
+    const networkRssi =
+      payload.telemetry?.network_rssi !== undefined
+        ? Math.round(payload.telemetry.network_rssi)
+        : payload.metrics?.network_rssi !== undefined
+          ? Math.round(payload.metrics.network_rssi)
+          : existingLastState?.networkRssi ?? robot.networkRssi;
+    const healthScore = this.computeHealthScore(cpuPercent, memoryPercent, diskPercent);
+
+    const currentTaskId = payload.task
+      ? payload.task.task_id ?? existingLastState?.currentTaskId ?? null
+      : existingLastState?.currentTaskId ?? null;
+    const currentTaskState = payload.task
+      ? payload.task.state ?? existingLastState?.currentTaskState ?? null
+      : existingLastState?.currentTaskState ?? null;
+    const currentTaskPercentComplete = payload.task
+      ? payload.task.percent_complete !== undefined
+        ? Math.round(payload.task.percent_complete)
+        : existingLastState?.currentTaskPercentComplete ?? null
+      : existingLastState?.currentTaskPercentComplete ?? null;
+
+    const updateData: Prisma.RobotUpdateInput = {
+      lastSeenAt: seenAt,
+      status,
+      batteryPercent,
+      floorplanId,
+      x,
+      y,
+      headingDegrees,
+      confidence,
+      cpuPercent,
+      memoryPercent,
+      tempC,
+      diskPercent,
+      networkRssi
+    };
 
     await this.prisma.robot.update({
       where: { id: robot.id },
       data: updateData
+    });
+
+    await this.prisma.robotLastState.upsert({
+      where: {
+        tenantId_siteId_robotId: {
+          tenantId,
+          siteId: envelope.site_id,
+          robotId: envelope.entity.robot_id
+        }
+      },
+      update: {
+        name: robot.name,
+        vendor: robot.vendorId,
+        model: robot.model,
+        serial: robot.serial,
+        tags: robot.tags,
+        status,
+        batteryPercent,
+        lastSeenAt: seenAt,
+        floorplanId,
+        x,
+        y,
+        headingDegrees,
+        confidence,
+        healthScore,
+        cpuPercent,
+        memoryPercent,
+        tempC,
+        diskPercent,
+        networkRssi,
+        currentTaskId,
+        currentTaskState,
+        currentTaskPercentComplete
+      },
+      create: {
+        tenantId,
+        siteId: envelope.site_id,
+        robotId: envelope.entity.robot_id,
+        name: robot.name,
+        vendor: robot.vendorId,
+        model: robot.model,
+        serial: robot.serial,
+        tags: robot.tags,
+        status,
+        batteryPercent,
+        lastSeenAt: seenAt,
+        floorplanId,
+        x,
+        y,
+        headingDegrees,
+        confidence,
+        healthScore,
+        cpuPercent,
+        memoryPercent,
+        tempC,
+        diskPercent,
+        networkRssi,
+        currentTaskId,
+        currentTaskState,
+        currentTaskPercentComplete
+      }
     });
 
     if (payload.metrics) {
@@ -1557,6 +1653,10 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
 
     for (const tenant of tenants) {
       const sites = await this.prisma.site.findMany({ where: { tenantId: tenant.id }, select: { id: true } });
+      const effectiveRobots = await this.listEffectiveRobotStates(
+        tenant.id,
+        sites.map((site) => site.id)
+      );
 
       let tenantMissionsTotal = 0;
       let tenantMissionsSucceeded = 0;
@@ -1566,7 +1666,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       let tenantOnline = 0;
 
       for (const site of sites) {
-        const [missions, incidents, robots] = await Promise.all([
+        const [missions, incidents] = await Promise.all([
           this.prisma.mission.findMany({
             where: {
               tenantId: tenant.id,
@@ -1586,10 +1686,6 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
                 lte: bucketEnd
               }
             }
-          }),
-          this.prisma.robot.findMany({
-            where: { tenantId: tenant.id, siteId: site.id },
-            select: { status: true }
           })
         ]);
 
@@ -1597,8 +1693,9 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         const missionsSucceeded = missions.filter((mission) => mission.state === "succeeded").length;
         const interventionsCount = missions.reduce((sum, mission) => sum + mission.interventionsCount, 0);
         const incidentsOpen = incidents.length;
-        const fleetSize = robots.length;
-        const onlineCount = robots.filter((robot) => robot.status === "online").length;
+        const siteRobots = effectiveRobots.filter((robot) => robot.siteId === site.id);
+        const fleetSize = siteRobots.length;
+        const onlineCount = siteRobots.filter((robot) => robot.status === "online").length;
         const uptimePercent = fleetSize ? Math.round((onlineCount / fleetSize) * 100) : 0;
 
         await this.prisma.siteAnalyticsRollupHourly.upsert({
@@ -2101,6 +2198,91 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     }
 
     return true;
+  }
+
+  private async listEffectiveRobotStates(tenantId: string, siteIds: string[]) {
+    const siteFilter = siteIds.length > 0 ? { siteId: { in: siteIds } } : {};
+    const lastStateRows = await this.prisma.robotLastState.findMany({
+      where: {
+        tenantId,
+        ...siteFilter
+      },
+      select: {
+        robotId: true,
+        siteId: true,
+        name: true,
+        status: true,
+        lastSeenAt: true
+      }
+    });
+
+    if (lastStateRows.length > 0) {
+      const settingsMap = await this.getSiteSettingsMap(tenantId, [...new Set(lastStateRows.map((row) => row.siteId))]);
+      return lastStateRows.map((row) =>
+        this.computeEffectiveRobotState(row.robotId, row.siteId, row.name, row.status, row.lastSeenAt, settingsMap)
+      );
+    }
+
+    const robots = await this.prisma.robot.findMany({
+      where: {
+        tenantId,
+        ...siteFilter
+      },
+      select: {
+        id: true,
+        siteId: true,
+        name: true,
+        status: true,
+        lastSeenAt: true
+      }
+    });
+    const settingsMap = await this.getSiteSettingsMap(tenantId, [...new Set(robots.map((robot) => robot.siteId))]);
+    return robots.map((robot) =>
+      this.computeEffectiveRobotState(robot.id, robot.siteId, robot.name, robot.status, robot.lastSeenAt, settingsMap)
+    );
+  }
+
+  private async getSiteSettingsMap(tenantId: string, siteIds: string[]) {
+    if (siteIds.length === 0) {
+      return new Map<string, number>();
+    }
+
+    const settings = await this.prisma.siteSetting.findMany({
+      where: {
+        tenantId,
+        siteId: { in: siteIds }
+      },
+      select: {
+        siteId: true,
+        robotOfflineAfterSeconds: true
+      }
+    });
+    return new Map(settings.map((setting) => [setting.siteId, setting.robotOfflineAfterSeconds]));
+  }
+
+  private computeEffectiveRobotState(
+    robotId: string,
+    siteId: string,
+    name: string,
+    reportedStatus: string,
+    lastSeenAt: Date,
+    settingsMap: Map<string, number>
+  ): EffectiveRobotState {
+    const offlineAfterSeconds = Math.max(1, settingsMap.get(siteId) ?? DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS);
+    const ageSeconds = Math.floor((Date.now() - lastSeenAt.getTime()) / 1000);
+    const isOfflineComputed = ageSeconds > offlineAfterSeconds;
+    return {
+      robotId,
+      siteId,
+      name,
+      status: isOfflineComputed ? "offline" : reportedStatus,
+      reportedStatus,
+      isOfflineComputed
+    };
+  }
+
+  private computeHealthScore(cpuPercent: number, memoryPercent: number, diskPercent: number) {
+    return Math.max(0, Math.min(100, 100 - Math.round((cpuPercent + memoryPercent + diskPercent) / 3)));
   }
 
   private async resolveSiteIds(tenantId: string, siteId?: string, explicitSiteIds: string[] = []) {

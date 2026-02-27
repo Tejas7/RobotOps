@@ -11,6 +11,11 @@ Server emits tenant-scoped Socket.IO channels:
 
 Gateway implementation: `apps/api/src/realtime/live.gateway.ts`
 
+`robots.live` source:
+- Primary source: `RobotLastState` read model.
+- Offline status computed at emit time using `SiteSetting.robotOfflineAfterSeconds`.
+- Publish cadence derived from site settings (`robotStatePublishPeriodSeconds`, min across tenant sites, default `2s`).
+
 Connection behavior:
 1. Client provides JWT in `handshake.auth.token` (or Bearer header fallback).
 2. Server verifies token using `JWT_SECRET`.
@@ -64,14 +69,17 @@ Consumer loop: `processIngestionTick()` in `Phase3Service`:
 
 ## Consumer Routing by `message_type`
 - `robot_state`
-  - Updates robot status/pose/telemetry fields.
+  - Updates `Robot` base record and upserts `RobotLastState`.
+  - `RobotLastState` is only mutated by this message type.
   - Appends telemetry points from `payload.metrics`.
   - Emits `telemetry.live`.
   - Does not create incidents.
 - `robot_event`
+  - Does not mutate `RobotLastState`.
   - Creates incident and incident timeline event when `create_incident=true`.
   - Emits `incidents.live`.
 - `task_status`
+  - Does not mutate `RobotLastState`.
   - Updates mission lifecycle fields/timestamps/duration.
   - Appends mission timeline event.
   - Emits `missions.live`.

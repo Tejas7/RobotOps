@@ -94,7 +94,7 @@ export default function OverviewPage() {
   const createSavedViewMutation = useAuthedMutation<SavedView>();
   const setDefaultSavedViewMutation = useAuthedMutation<RoleDefault>();
 
-  const robotsQuery = useAuthedQuery<Robot[]>(["robots", effectiveSiteId], `/robots?site_id=${effectiveSiteId}`);
+  const robotsQuery = useAuthedQuery<Robot[]>(["robots-last-state", effectiveSiteId], `/robots/last_state?site_id=${effectiveSiteId}`);
   const missionsQuery = useAuthedQuery<Mission[]>(["missions", effectiveSiteId], `/missions?site_id=${effectiveSiteId}`);
   const incidentsQuery = useAuthedQuery<Incident[]>(["incidents", effectiveSiteId], `/incidents?site_id=${effectiveSiteId}`);
   const floorplansQuery = useAuthedQuery<Floorplan[]>(["floorplans", effectiveSiteId], `/floorplans?site_id=${effectiveSiteId}`);
@@ -209,7 +209,13 @@ export default function OverviewPage() {
     if (!socket) {
       return;
     }
-    const onRobots = (payload: { data: Robot[] }) => setLiveRobots(payload.data);
+    const onRobots = (payload: { data: Array<Robot & { siteId?: string }> }) => {
+      if (effectiveSiteId === "all") {
+        setLiveRobots(payload.data);
+        return;
+      }
+      setLiveRobots(payload.data.filter((robot) => robot.siteId === effectiveSiteId));
+    };
     const onIncidents = (payload: { data: Incident[] }) => setLiveIncidents(payload.data);
     socket.on("robots.live", onRobots);
     socket.on("incidents.live", onIncidents);
@@ -217,7 +223,7 @@ export default function OverviewPage() {
       socket.off("robots.live", onRobots);
       socket.off("incidents.live", onIncidents);
     };
-  }, [socket]);
+  }, [effectiveSiteId, socket]);
 
   const activeRobots = robots.filter((robot) => robot.status === "online" || robot.status === "degraded").length;
   const uptimePercent = robots.length ? Math.round((robots.filter((robot) => robot.status === "online").length / robots.length) * 100) : 0;

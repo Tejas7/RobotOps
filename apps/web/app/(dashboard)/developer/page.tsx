@@ -46,7 +46,7 @@ const REST_ENDPOINTS = [
   "GET /tenants/me",
   "GET /sites",
   "GET /floorplans?site_id={id}",
-  "GET /robots?site_id={id}&status=online&tag=amr",
+  "GET /robots/last_state?site_id={id}&status=online&tag=amr",
   "GET /robots/{id}",
   "GET /robots/{id}/path",
   "POST /robots/{id}/actions",
@@ -307,7 +307,7 @@ export default function DeveloperPage() {
 {`export ROBOTOPS_API_URL=http://localhost:4000/api
 export ROBOTOPS_TOKEN=<jwt-token>
 
-curl "$ROBOTOPS_API_URL/robots?site_id=s1" -H "Authorization: Bearer $ROBOTOPS_TOKEN"
+curl "$ROBOTOPS_API_URL/robots/last_state?site_id=s1" -H "Authorization: Bearer $ROBOTOPS_TOKEN"
 curl "$ROBOTOPS_API_URL/audit?resource_type=robot&limit=25" -H "Authorization: Bearer $ROBOTOPS_TOKEN"
 `}
         </pre>

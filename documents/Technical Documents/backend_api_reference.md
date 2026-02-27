@@ -18,8 +18,9 @@ Base URL: `http://localhost:4000/api`
 | GET | `/tenants/me` | authenticated | Current tenant metadata. |
 | GET | `/sites` | `robots.read` | Tenant site list. |
 | GET | `/floorplans` | `robots.read` | Query: `site_id` (`all` supported). Includes zones. |
-| GET | `/robots` | `robots.read` | Filters: `site_id,status,tag,vendor,capability,battery_min,battery_max`. |
-| GET | `/robots/:id` | `robots.read` | Robot detail with missions/incidents. |
+| GET | `/robots/last_state` | `robots.read` | Read-model route. Filters: `site_id,status,vendor,tag`. Returns `status`, `reported_status`, `is_offline_computed`. |
+| GET | `/robots` | `robots.read` | Compatibility route (read-model sourced). Filters: `site_id,status,tag,vendor,capability,battery_min,battery_max`. |
+| GET | `/robots/:id` | `robots.read` | Robot detail with dynamic live-state overlay from read model. |
 | POST | `/robots/:id/actions` | `robots.control.*` or `robots.control` | Action request (`dock,pause,resume,speed_limit`). |
 | GET | `/missions` | `missions.read` | Filters: `site_id,state`. |
 | POST | `/missions` | `missions.create` or `missions.write` | Mission creation with route + zone ack checks. |

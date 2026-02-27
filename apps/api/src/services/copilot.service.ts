@@ -134,11 +134,46 @@ export class CopilotService {
     }
 
     if (lower.includes("robot") || lower.includes("vendor") || lower.includes("fleet")) {
-      const robots = await this.prisma.robot.findMany({
-        where: { tenantId },
-        orderBy: { lastSeenAt: "desc" },
-        take: 20
-      });
+      const [lastStates, settings] = await Promise.all([
+        this.prisma.robotLastState.findMany({
+          where: { tenantId },
+          orderBy: { lastSeenAt: "desc" },
+          take: 20
+        }),
+        this.prisma.siteSetting.findMany({
+          where: { tenantId },
+          select: {
+            siteId: true,
+            robotOfflineAfterSeconds: true
+          }
+        })
+      ]);
+      const settingsMap = new Map(settings.map((setting) => [setting.siteId, setting.robotOfflineAfterSeconds]));
+
+      const robots =
+        lastStates.length > 0
+          ? lastStates.map((row) => {
+              const offlineAfterSeconds = Math.max(1, settingsMap.get(row.siteId) ?? 15);
+              const ageSeconds = Math.floor((Date.now() - row.lastSeenAt.getTime()) / 1000);
+              const isOfflineComputed = ageSeconds > offlineAfterSeconds;
+              return {
+                id: row.robotId,
+                name: row.name,
+                siteId: row.siteId,
+                status: isOfflineComputed ? "offline" : row.status,
+                reported_status: row.status,
+                is_offline_computed: isOfflineComputed,
+                batteryPercent: row.batteryPercent,
+                lastSeenAt: row.lastSeenAt,
+                healthScore: row.healthScore
+              };
+            })
+          : await this.prisma.robot.findMany({
+              where: { tenantId },
+              orderBy: { lastSeenAt: "desc" },
+              take: 20
+            });
+
       toolResults.push({
         name: "query_robots",
         data: robots,

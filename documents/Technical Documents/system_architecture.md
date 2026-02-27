@@ -33,6 +33,11 @@ flowchart LR
 - `CopilotController` + `CopilotService`: thread creation and message handling with tenant-scoped internal query tools.
 - `LiveGateway`: Socket.IO live channels and tenant room fanout.
 
+Read-model pattern (V1 Phase 2):
+- `RobotLastState` is the canonical read source for robot live state and pose.
+- `SiteSetting` supplies per-site offline timeout and publish cadence defaults.
+- Compatibility endpoints (`/robots`, `/robots/:id`) overlay from read model to preserve API stability.
+
 ## Frontend Shell Architecture
 - Protected dashboard routes under `apps/web/app/(dashboard)`.
 - Shared shell:

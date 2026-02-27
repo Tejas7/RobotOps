@@ -45,10 +45,20 @@ Required fields per entry:
   - `npm run build` (pass)
   - `npm run qa:phase3` regression (pass)
 
+### 2026-02-27 - V1 Phase 2
+- Status: completed (agent workflow)
+- Scope summary: first-class `RobotLastState` read model, `/robots/last_state` endpoint, read-model-driven robot consumers across API/live/web, site-level offline/publish settings defaults.
+- Verification noted in repo workflow:
+  - `npm run typecheck` (pass)
+  - `npm run build` (pass)
+  - `npm run qa:v1:phase1` regression (pass)
+  - `npm run qa:v1:phase2` (pass)
+
 ## Last Technical Docs Sync
 - Date: 2026-02-27
 - Updated by: agent
 - Files refreshed:
+  - `documents/Implementation Plan/V1/implementation_plan_phase2.md`
   - `README.md`
   - `system_architecture.md`
   - `backend_api_reference.md`

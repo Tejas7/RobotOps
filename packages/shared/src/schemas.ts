@@ -52,6 +52,13 @@ export const robotPathQuerySchema = z.object({
   floorplan_id: z.string().min(1).optional()
 });
 
+export const robotLastStateQuerySchema = z.object({
+  site_id: z.string().min(1).optional(),
+  status: z.enum(["online", "offline", "degraded", "maintenance", "emergency_stop"]).optional(),
+  vendor: z.string().min(1).optional(),
+  tag: z.string().min(1).optional()
+});
+
 export const savedViewCreateSchema = z.object({
   page: z.string().min(1),
   name: z.string().min(2),
@@ -375,6 +382,7 @@ export type IncidentResolveInput = z.infer<typeof incidentResolveSchema>;
 export type CopilotMessageInput = z.infer<typeof copilotMessageSchema>;
 export type TelemetryQueryInput = z.infer<typeof telemetryQuerySchema>;
 export type RobotPathQueryInput = z.infer<typeof robotPathQuerySchema>;
+export type RobotLastStateQueryInput = z.infer<typeof robotLastStateQuerySchema>;
 export type SavedViewCreateInput = z.infer<typeof savedViewCreateSchema>;
 export type SavedViewPatchInput = z.infer<typeof savedViewPatchSchema>;
 export type RoleDefaultInput = z.infer<typeof roleDefaultSchema>;

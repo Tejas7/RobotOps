@@ -76,6 +76,60 @@ export interface Robot {
   createdAt: string;
 }
 
+export interface SiteSetting {
+  tenantId: string;
+  siteId: string;
+  robotOfflineAfterSeconds: number;
+  robotStatePublishPeriodSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RobotOfflineComputationInput {
+  reportedStatus: Status;
+  lastSeenAt: string;
+  robotOfflineAfterSeconds: number;
+  now?: string;
+}
+
+export interface RobotOfflineComputationResult {
+  status: Status;
+  reportedStatus: Status;
+  isOfflineComputed: boolean;
+  offlineAfterSeconds: number;
+}
+
+export interface RobotLastStateResponse {
+  robotId: string;
+  tenantId: string;
+  siteId: string;
+  name: string;
+  vendor: string;
+  model: string;
+  serial: string;
+  tags: string[];
+  status: Status;
+  reportedStatus: Status;
+  isOfflineComputed: boolean;
+  batteryPercent: number;
+  lastSeenAt: string;
+  floorplanId: string;
+  x: number;
+  y: number;
+  headingDegrees: number;
+  confidence: number;
+  healthScore: number;
+  cpuPercent: number;
+  memoryPercent: number;
+  tempC: number;
+  diskPercent: number;
+  networkRssi: number;
+  currentTaskId: string | null;
+  currentTaskState: string | null;
+  currentTaskPercentComplete: number | null;
+  updatedAt: string;
+}
+
 export interface Mission {
   id: string;
   tenantId: string;

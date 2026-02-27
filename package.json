@@ -12,6 +12,7 @@
     "dev:api": "npm --workspace @robotops/api run start:dev",
     "qa:phase1": "node scripts/phase1-qa.mjs",
     "qa:v1:phase1": "node scripts/v1-phase1-qa.mjs",
+    "qa:v1:phase2": "node scripts/v1-phase2-qa.mjs",
     "qa:phase2": "node scripts/phase2-qa.mjs",
     "qa:phase3": "node scripts/phase3-qa.mjs",
     "build": "npm run build --workspaces --if-present",

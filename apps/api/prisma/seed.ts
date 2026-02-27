@@ -29,12 +29,14 @@ async function main() {
   await prisma.incident.deleteMany();
   await prisma.missionEvent.deleteMany();
   await prisma.mission.deleteMany();
+  await prisma.robotLastState.deleteMany();
   await prisma.robotPathPoint.deleteMany();
   await prisma.telemetryPoint.deleteMany();
   await prisma.robot.deleteMany();
   await prisma.robotVendor.deleteMany();
   await prisma.zone.deleteMany();
   await prisma.floorplan.deleteMany();
+  await prisma.siteSetting.deleteMany();
   await prisma.site.deleteMany();
   await prisma.user.deleteMany();
   await prisma.tenant.deleteMany();
@@ -100,6 +102,23 @@ async function main() {
         address: "Montreal, QC",
         timezone: "America/Toronto",
         createdAt: new Date("2026-01-15T08:30:00Z")
+      }
+    ]
+  });
+
+  await prisma.siteSetting.createMany({
+    data: [
+      {
+        tenantId: "t1",
+        siteId: "s1",
+        robotOfflineAfterSeconds: 15,
+        robotStatePublishPeriodSeconds: 2
+      },
+      {
+        tenantId: "t1",
+        siteId: "s2",
+        robotOfflineAfterSeconds: 15,
+        robotStatePublishPeriodSeconds: 2
       }
     ]
   });
@@ -680,6 +699,38 @@ async function main() {
         createdAt: new Date("2026-01-27T09:10:00Z")
       }
     ]
+  });
+
+  const seededRobots = await prisma.robot.findMany({ where: { tenantId: "t1" } });
+  await prisma.robotLastState.createMany({
+    data: seededRobots.map((robot) => ({
+      tenantId: robot.tenantId,
+      siteId: robot.siteId,
+      robotId: robot.id,
+      name: robot.name,
+      vendor: robot.vendorId,
+      model: robot.model,
+      serial: robot.serial,
+      tags: robot.tags,
+      status: robot.status,
+      batteryPercent: robot.batteryPercent,
+      lastSeenAt: robot.lastSeenAt,
+      floorplanId: robot.floorplanId,
+      x: robot.x,
+      y: robot.y,
+      headingDegrees: robot.headingDegrees,
+      confidence: robot.confidence,
+      healthScore: Math.max(0, Math.min(100, 100 - Math.round((robot.cpuPercent + robot.memoryPercent + robot.diskPercent) / 3))),
+      cpuPercent: robot.cpuPercent,
+      memoryPercent: robot.memoryPercent,
+      tempC: robot.tempC,
+      diskPercent: robot.diskPercent,
+      networkRssi: robot.networkRssi,
+      currentTaskId: null,
+      currentTaskState: null,
+      currentTaskPercentComplete: null,
+      updatedAt: robot.lastSeenAt
+    }))
   });
 
   await prisma.mission.createMany({

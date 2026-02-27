@@ -52,7 +52,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Site/time/saved-view controls are in-page and URL-synced.
 - Uses:
   - `/sites`, `/saved-views?page=overview`
-  - `/robots`, `/missions`, `/incidents`, `/floorplans`
+  - `/robots/last_state`, `/missions`, `/incidents`, `/floorplans`
 - Features:
   - Save current view, apply saved view, set role default.
   - Applies role default view if URL has no explicit filter.
@@ -62,7 +62,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 ### `/fleet`
 - Filtered robot table and robot details drawer.
 - Uses:
-  - `/robots`, `/robots/:id`
+  - `/robots/last_state`, `/robots/:id`
   - `/missions`, `/incidents`
   - `/telemetry/robot/:id`, `/audit`
   - `/robots/:id/actions`
@@ -73,7 +73,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 ### `/facility`
 - Facility map with layer toggles and playback controls.
 - Uses:
-  - `/floorplans`, `/robots`, `/rtls/assets`
+  - `/floorplans`, `/robots/last_state`, `/rtls/assets`
   - `/robots/:id/path`
 - Features:
   - Path playback scrubber/trails.
@@ -82,7 +82,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 ### `/missions`
 - Mission table, mission detail drawer, create-mission drawer.
 - Uses:
-  - `/missions`, `/robots`, `/missions/:id`, `/missions` (POST).
+  - `/missions`, `/robots/last_state`, `/missions/:id`, `/missions` (POST).
 - Uses shared `missionCreateSchema` for form validation.
 
 ### `/incidents`
@@ -122,7 +122,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Features:
   - WebSocket stream tester log.
   - Structured audit diff drilldown.
-  - Token-aware API explorer command snippets.
+  - Token-aware API explorer command snippets including `/robots/last_state`.
 
 ### `/copilot`
 - Threaded copilot UI with citations and suggestion confirmations.

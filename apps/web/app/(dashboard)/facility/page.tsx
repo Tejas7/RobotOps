@@ -54,7 +54,7 @@ export default function FacilityPage() {
   const { siteId } = useGlobalFilters();
   const { socket } = useLiveSocket();
   const floorplansQuery = useAuthedQuery<Floorplan[]>(["floorplans", siteId], `/floorplans?site_id=${siteId}`);
-  const robotsQuery = useAuthedQuery<Robot[]>(["robots", siteId], `/robots?site_id=${siteId}`);
+  const robotsQuery = useAuthedQuery<Robot[]>(["robots-last-state", siteId], `/robots/last_state?site_id=${siteId}`);
   const assetsQuery = useAuthedQuery<Asset[]>(["assets", siteId], `/rtls/assets?site_id=${siteId}`);
 
   const [liveRobots, setLiveRobots] = useState<Robot[] | null>(null);
@@ -84,12 +84,18 @@ export default function FacilityPage() {
     if (!socket) {
       return;
     }
-    const onRobots = (payload: { data: Robot[] }) => setLiveRobots(payload.data);
+    const onRobots = (payload: { data: Array<Robot & { siteId?: string }> }) => {
+      if (siteId === "all") {
+        setLiveRobots(payload.data);
+        return;
+      }
+      setLiveRobots(payload.data.filter((robot) => robot.siteId === siteId));
+    };
     socket.on("robots.live", onRobots);
     return () => {
       socket.off("robots.live", onRobots);
     };
-  }, [socket]);
+  }, [siteId, socket]);
 
   const floorplans = floorplansQuery.data ?? [];
 

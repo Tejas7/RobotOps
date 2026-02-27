@@ -127,14 +127,25 @@ export default function FleetPage() {
 
   const robotsQuery = useAuthedQuery<Robot[]>(
     ["fleet-robots", siteId, statusFilter, vendorFilter, tagFilter, capabilityFilter, batteryMin],
-    `/robots?site_id=${siteId}&battery_min=${batteryMin}${statusFilter !== "all" ? `&status=${statusFilter}` : ""}${
+    `/robots/last_state?site_id=${siteId}${statusFilter !== "all" ? `&status=${statusFilter}` : ""}${
       vendorFilter !== "all" ? `&vendor=${vendorFilter}` : ""
-    }${tagFilter !== "all" ? `&tag=${tagFilter}` : ""}${capabilityFilter !== "all" ? `&capability=${capabilityFilter}` : ""}`
+    }${tagFilter !== "all" ? `&tag=${tagFilter}` : ""}`
   );
 
+  const robotRows = robotsQuery.data ?? [];
+  const robots = useMemo(() => {
+    const parsedBatteryMin = Number(batteryMin);
+    const batteryThreshold = Number.isFinite(parsedBatteryMin) ? parsedBatteryMin : 0;
+    return robotRows.filter((robot) => {
+      const capabilityPass = capabilityFilter === "all" ? true : robot.capabilities.includes(capabilityFilter);
+      const batteryPass = robot.batteryPercent >= batteryThreshold;
+      return capabilityPass && batteryPass;
+    });
+  }, [batteryMin, capabilityFilter, robotRows]);
+
   const selectedRobot = useMemo(
-    () => (selectedRobotId ? robotsQuery.data?.find((robot) => robot.id === selectedRobotId) : null),
-    [selectedRobotId, robotsQuery.data]
+    () => (selectedRobotId ? robots.find((robot) => robot.id === selectedRobotId) : null),
+    [selectedRobotId, robots]
   );
 
   const robotDetailQuery = useAuthedQuery<Robot | null>(
@@ -163,11 +174,9 @@ export default function FleetPage() {
   const actionMutation = useAuthedMutation<{ accepted: boolean; action: string }>();
   const [confirmAction, setConfirmAction] = useState<null | "dock" | "pause" | "resume" | "speed_limit" | "emergency">(null);
 
-  const availableTags = Array.from(new Set((robotsQuery.data ?? []).flatMap((robot) => robot.tags))).sort();
-  const availableCapabilities = Array.from(new Set((robotsQuery.data ?? []).flatMap((robot) => robot.capabilities))).sort();
-  const availableVendors = Array.from(
-    new Map((robotsQuery.data ?? []).map((robot) => [robot.vendor.id, robot.vendor])).values()
-  );
+  const availableTags = Array.from(new Set(robotRows.flatMap((robot) => robot.tags))).sort();
+  const availableCapabilities = Array.from(new Set(robotRows.flatMap((robot) => robot.capabilities))).sort();
+  const availableVendors = Array.from(new Map(robotRows.map((robot) => [robot.vendor.id, robot.vendor])).values());
 
   const hasRobotControl = can("robots.control");
 
@@ -318,7 +327,7 @@ export default function FleetPage() {
             </tr>
           </THead>
           <tbody>
-            {(robotsQuery.data ?? []).map((robot) => {
+            {robots.map((robot) => {
               const healthScore = Math.max(0, 100 - Math.round((robot.cpuPercent + robot.memoryPercent + robot.diskPercent) / 3));
               return (
                 <Tr key={robot.id} className="cursor-pointer" onClick={() => setSelectedRobotId(robot.id)}>

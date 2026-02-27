@@ -12,6 +12,7 @@ import {
   normalizePermissions,
   permissionImplies,
   robotActionSchema,
+  robotLastStateQuerySchema,
   robotPathQuerySchema,
   roleDefaultSchema,
   savedViewCreateSchema,
@@ -73,6 +74,15 @@ interface RobotPathFilters {
   interval_seconds?: string;
   floorplan_id?: string;
 }
+
+interface RobotLastStateFilters {
+  site_id?: string;
+  status?: string;
+  vendor?: string;
+  tag?: string;
+}
+
+const DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS = 15;
 
 @Injectable()
 export class OpsService {
@@ -137,38 +147,27 @@ export class OpsService {
   }
 
   async listRobots(tenantId: string, filters: RobotFilters) {
-    return this.prisma.robot.findMany({
-      where: {
-        tenantId,
-        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
-        ...(filters.status ? { status: filters.status } : {}),
-        ...(filters.tag ? { tags: { has: filters.tag } } : {}),
-        ...(filters.vendor ? { vendorId: filters.vendor } : {}),
-        ...(filters.capability ? { capabilities: { has: filters.capability } } : {}),
-        ...(filters.battery_min || filters.battery_max
-          ? {
-              batteryPercent: {
-                ...(filters.battery_min !== undefined ? { gte: Number(filters.battery_min) } : {}),
-                ...(filters.battery_max !== undefined ? { lte: Number(filters.battery_max) } : {})
-              }
-            }
-          : {})
-      },
-      include: {
-        vendor: true,
-        site: true,
-        missions: {
-          where: {
-            state: {
-              in: ["queued", "running", "blocked"]
-            }
-          },
-          take: 1,
-          orderBy: { createdAt: "desc" }
-        }
-      },
-      orderBy: [{ status: "asc" }, { name: "asc" }]
+    const rows = await this.fetchRobotLastStateView(tenantId, {
+      site_id: filters.site_id,
+      status: filters.status,
+      vendor: filters.vendor,
+      tag: filters.tag
     });
+
+    return rows.filter((row) => {
+      const capabilityPass = filters.capability ? (row.capabilities ?? []).includes(filters.capability) : true;
+      const batteryMinPass = filters.battery_min !== undefined ? row.batteryPercent >= Number(filters.battery_min) : true;
+      const batteryMaxPass = filters.battery_max !== undefined ? row.batteryPercent <= Number(filters.battery_max) : true;
+      return capabilityPass && batteryMinPass && batteryMaxPass;
+    });
+  }
+
+  async listRobotsLastState(tenantId: string, filters: RobotLastStateFilters) {
+    const parsed = robotLastStateQuerySchema.safeParse(filters);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+    return this.fetchRobotLastStateView(tenantId, parsed.data);
   }
 
   async getRobot(tenantId: string, id: string) {
@@ -191,8 +190,56 @@ export class OpsService {
     if (!robot) {
       throw new NotFoundException("Robot not found");
     }
+    const lastState = await this.prisma.robotLastState.findUnique({
+      where: {
+        tenantId_siteId_robotId: {
+          tenantId,
+          siteId: robot.siteId,
+          robotId: robot.id
+        }
+      }
+    });
 
-    return robot;
+    if (!lastState) {
+      return robot;
+    }
+
+    const setting = await this.prisma.siteSetting.findUnique({
+      where: {
+        tenantId_siteId: {
+          tenantId,
+          siteId: robot.siteId
+        }
+      }
+    });
+    const { status, reported_status, is_offline_computed } = this.computeOfflineState(
+      lastState.status,
+      lastState.lastSeenAt,
+      setting?.robotOfflineAfterSeconds ?? DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS
+    );
+
+    return {
+      ...robot,
+      status,
+      batteryPercent: lastState.batteryPercent,
+      lastSeenAt: lastState.lastSeenAt,
+      floorplanId: lastState.floorplanId,
+      x: lastState.x,
+      y: lastState.y,
+      headingDegrees: lastState.headingDegrees,
+      confidence: lastState.confidence,
+      cpuPercent: lastState.cpuPercent,
+      memoryPercent: lastState.memoryPercent,
+      tempC: lastState.tempC,
+      diskPercent: lastState.diskPercent,
+      networkRssi: lastState.networkRssi,
+      reported_status,
+      is_offline_computed,
+      healthScore: lastState.healthScore,
+      currentTaskId: lastState.currentTaskId,
+      currentTaskState: lastState.currentTaskState,
+      currentTaskPercentComplete: lastState.currentTaskPercentComplete
+    };
   }
 
   async requestRobotAction(tenantId: string, robotId: string, user: RequestUser, input: unknown) {
@@ -1378,6 +1425,191 @@ export class OpsService {
       throw new BadRequestException(parsed.error.flatten());
     }
     return parsed.data;
+  }
+
+  private async fetchRobotLastStateView(tenantId: string, filters: RobotLastStateFilters) {
+    const rows = await this.prisma.robotLastState.findMany({
+      where: {
+        tenantId,
+        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
+        ...(filters.vendor ? { vendor: filters.vendor } : {}),
+        ...(filters.tag ? { tags: { has: filters.tag } } : {})
+      },
+      orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+      take: 5000
+    });
+
+    if (rows.length === 0) {
+      return this.fetchRobotFallbackView(tenantId, filters);
+    }
+
+    const siteIds = [...new Set(rows.map((row) => row.siteId))];
+    const settingsMap = await this.getSiteSettingsMap(tenantId, siteIds);
+
+    const rowsWithStatus = rows.map((row) => {
+      const setting = settingsMap.get(row.siteId);
+      const offline = this.computeOfflineState(
+        row.status,
+        row.lastSeenAt,
+        setting?.robotOfflineAfterSeconds ?? DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS
+      );
+      return {
+        ...row,
+        status: offline.status,
+        reported_status: offline.reported_status,
+        is_offline_computed: offline.is_offline_computed
+      };
+    });
+
+    const statusFiltered = filters.status ? rowsWithStatus.filter((row) => row.status === filters.status) : rowsWithStatus;
+    if (statusFiltered.length === 0) {
+      return [];
+    }
+
+    const robotById = new Map(
+      (
+        await this.prisma.robot.findMany({
+          where: {
+            tenantId,
+            id: { in: statusFiltered.map((row) => row.robotId) }
+          },
+          include: {
+            vendor: true,
+            site: true,
+            missions: {
+              where: {
+                state: {
+                  in: ["queued", "running", "blocked"]
+                }
+              },
+              take: 1,
+              orderBy: { createdAt: "desc" }
+            }
+          }
+        })
+      ).map((robot) => [robot.id, robot])
+    );
+
+    return statusFiltered
+      .map((row) => {
+        const robot = robotById.get(row.robotId);
+        if (!robot) {
+          return null;
+        }
+
+        return {
+          ...robot,
+          status: row.status,
+          batteryPercent: row.batteryPercent,
+          lastSeenAt: row.lastSeenAt,
+          floorplanId: row.floorplanId,
+          x: row.x,
+          y: row.y,
+          headingDegrees: row.headingDegrees,
+          confidence: row.confidence,
+          cpuPercent: row.cpuPercent,
+          memoryPercent: row.memoryPercent,
+          tempC: row.tempC,
+          diskPercent: row.diskPercent,
+          networkRssi: row.networkRssi,
+          healthScore: row.healthScore,
+          currentTaskId: row.currentTaskId,
+          currentTaskState: row.currentTaskState,
+          currentTaskPercentComplete: row.currentTaskPercentComplete,
+          reported_status: row.reported_status,
+          is_offline_computed: row.is_offline_computed
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+  }
+
+  private async fetchRobotFallbackView(tenantId: string, filters: RobotLastStateFilters) {
+    const robots = await this.prisma.robot.findMany({
+      where: {
+        tenantId,
+        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
+        ...(filters.vendor ? { vendorId: filters.vendor } : {}),
+        ...(filters.tag ? { tags: { has: filters.tag } } : {})
+      },
+      include: {
+        vendor: true,
+        site: true,
+        missions: {
+          where: {
+            state: {
+              in: ["queued", "running", "blocked"]
+            }
+          },
+          take: 1,
+          orderBy: { createdAt: "desc" }
+        }
+      },
+      orderBy: [{ lastSeenAt: "desc" }, { name: "asc" }],
+      take: 5000
+    });
+
+    const siteIds = [...new Set(robots.map((robot) => robot.siteId))];
+    const settingsMap = await this.getSiteSettingsMap(tenantId, siteIds);
+
+    const mapped = robots.map((robot) => {
+      const setting = settingsMap.get(robot.siteId);
+      const offline = this.computeOfflineState(
+        robot.status,
+        robot.lastSeenAt,
+        setting?.robotOfflineAfterSeconds ?? DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS
+      );
+      return {
+        ...robot,
+        status: offline.status,
+        healthScore: Math.max(0, Math.min(100, 100 - Math.round((robot.cpuPercent + robot.memoryPercent + robot.diskPercent) / 3))),
+        currentTaskId: null,
+        currentTaskState: null,
+        currentTaskPercentComplete: null,
+        reported_status: offline.reported_status,
+        is_offline_computed: offline.is_offline_computed
+      };
+    });
+
+    return filters.status ? mapped.filter((robot) => robot.status === filters.status) : mapped;
+  }
+
+  private async getSiteSettingsMap(tenantId: string, siteIds: string[]) {
+    if (siteIds.length === 0) {
+      return new Map<string, { robotOfflineAfterSeconds: number; robotStatePublishPeriodSeconds: number }>();
+    }
+
+    const settings = await this.prisma.siteSetting.findMany({
+      where: {
+        tenantId,
+        siteId: { in: siteIds }
+      },
+      select: {
+        siteId: true,
+        robotOfflineAfterSeconds: true,
+        robotStatePublishPeriodSeconds: true
+      }
+    });
+
+    return new Map(
+      settings.map((setting) => [
+        setting.siteId,
+        {
+          robotOfflineAfterSeconds: setting.robotOfflineAfterSeconds,
+          robotStatePublishPeriodSeconds: setting.robotStatePublishPeriodSeconds
+        }
+      ])
+    );
+  }
+
+  private computeOfflineState(reportedStatus: string, lastSeenAt: Date, robotOfflineAfterSeconds: number) {
+    const offlineAfterSeconds = Math.max(1, robotOfflineAfterSeconds);
+    const ageSeconds = Math.floor((Date.now() - lastSeenAt.getTime()) / 1000);
+    const isOfflineComputed = ageSeconds > offlineAfterSeconds;
+    return {
+      status: isOfflineComputed ? "offline" : reportedStatus,
+      reported_status: reportedStatus,
+      is_offline_computed: isOfflineComputed
+    };
   }
 
   private optionalDate(raw: string | undefined, message: string) {

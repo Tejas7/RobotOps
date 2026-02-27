@@ -65,6 +65,8 @@ model Tenant {
   alertEvents AlertEvent[]
   alertDeliveries AlertDelivery[]
   roleScopeOverrides RoleScopeOverride[]
+  robotLastStates RobotLastState[]
+  siteSettings SiteSetting[]
 }
 
 model User {
@@ -94,6 +96,8 @@ model Site {
   assets     Asset[]
   proximities ProximityEvent[]
   analyticsRollups SiteAnalyticsRollupHourly[]
+  robotLastStates RobotLastState[]
+  siteSettings SiteSetting[]
 }
 
 model Floorplan {
@@ -174,6 +178,58 @@ model Robot {
   telemetries   TelemetryPoint[]
   pathPoints    RobotPathPoint[]
   proximities   ProximityEvent[]
+  lastStates    RobotLastState[]
+}
+
+model SiteSetting {
+  tenantId                       String
+  siteId                         String
+  robotOfflineAfterSeconds       Int      @default(15)
+  robotStatePublishPeriodSeconds Int      @default(2)
+  createdAt                      DateTime @default(now())
+  updatedAt                      DateTime @updatedAt
+  tenant                         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site                           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, siteId])
+}
+
+model RobotLastState {
+  tenantId                   String
+  siteId                     String
+  robotId                    String
+  name                       String
+  vendor                     String
+  model                      String
+  serial                     String
+  tags                       String[]
+  status                     String
+  batteryPercent             Int
+  lastSeenAt                 DateTime
+  floorplanId                String
+  x                          Float
+  y                          Float
+  headingDegrees             Float
+  confidence                 Float
+  healthScore                Int
+  cpuPercent                 Int
+  memoryPercent              Int
+  tempC                      Int
+  diskPercent                Int
+  networkRssi                Int
+  currentTaskId              String?
+  currentTaskState           String?
+  currentTaskPercentComplete Int?
+  updatedAt                  DateTime @updatedAt
+  tenant                     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site                       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  robot                      Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, siteId, robotId])
+  @@index([tenantId, siteId, status])
+  @@index([tenantId, siteId, vendor])
+  @@index([tenantId, siteId, floorplanId])
+  @@index([tenantId, siteId, updatedAt])
 }
 
 model Mission {

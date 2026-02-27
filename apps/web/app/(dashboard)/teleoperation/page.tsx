@@ -43,7 +43,7 @@ export default function TeleoperationPage() {
   const { can } = useRbac();
   const { connected } = useLiveSocket();
 
-  const robotsQuery = useAuthedQuery<Robot[]>(["teleop-robots", siteId], `/robots?site_id=${siteId}`);
+  const robotsQuery = useAuthedQuery<Robot[]>(["teleop-robots", siteId], `/robots/last_state?site_id=${siteId}`);
   const incidentsQuery = useAuthedQuery<Incident[]>(["teleop-incidents", siteId], `/incidents?site_id=${siteId}&status=open`);
 
   const [selectedRobotId, setSelectedRobotId] = useState<string>("r1");

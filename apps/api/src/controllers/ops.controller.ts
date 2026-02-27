@@ -66,6 +66,23 @@ export class OpsController {
     });
   }
 
+  @Get("robots/last_state")
+  @RequirePermissions("robots.read")
+  listRobotsLastState(
+    @CurrentUser() user: RequestUser,
+    @Query("site_id") site_id?: string,
+    @Query("status") status?: string,
+    @Query("vendor") vendor?: string,
+    @Query("tag") tag?: string
+  ) {
+    return this.opsService.listRobotsLastState(user.tenantId, {
+      site_id,
+      status,
+      vendor,
+      tag
+    });
+  }
+
   @Get("robots/:id")
   @RequirePermissions("robots.read")
   getRobot(@CurrentUser() user: RequestUser, @Param("id") id: string) {
