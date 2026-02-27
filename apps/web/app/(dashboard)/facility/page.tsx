@@ -33,23 +33,52 @@ interface Asset {
   proximityEvents: Array<{ id: string; riskLevel: string; distanceM: number; timestamp: string }>;
 }
 
+interface RobotPathResponse {
+  robotId: string;
+  from: string;
+  to: string;
+  intervalSeconds: number;
+  totalPoints: number;
+  points: Array<{
+    id: string;
+    floorplanId: string;
+    x: number;
+    y: number;
+    headingDegrees: number;
+    confidence: number;
+    timestamp: string;
+  }>;
+}
+
 export default function FacilityPage() {
   const { siteId } = useGlobalFilters();
   const { socket } = useLiveSocket();
   const floorplansQuery = useAuthedQuery<Floorplan[]>(["floorplans", siteId], `/floorplans?site_id=${siteId}`);
   const robotsQuery = useAuthedQuery<Robot[]>(["robots", siteId], `/robots?site_id=${siteId}`);
   const assetsQuery = useAuthedQuery<Asset[]>(["assets", siteId], `/rtls/assets?site_id=${siteId}`);
+
   const [liveRobots, setLiveRobots] = useState<Robot[] | null>(null);
-
-  const floorplans = floorplansQuery.data ?? [];
-  const [selectedFloorplanId, setSelectedFloorplanId] = useState(floorplans[0]?.id ?? "f1");
-
+  const [selectedFloorplanId, setSelectedFloorplanId] = useState("f1");
   const [showZones, setShowZones] = useState(true);
   const [showRobots, setShowRobots] = useState(true);
   const [showAssets, setShowAssets] = useState(true);
   const [showProximity, setShowProximity] = useState(true);
   const [playbackPosition, setPlaybackPosition] = useState(80);
+  const [playbackRobotId, setPlaybackRobotId] = useState("");
   const [incidentNote, setIncidentNote] = useState("Potential congestion near High Traffic Aisle");
+
+  const robots = liveRobots ?? robotsQuery.data ?? [];
+
+  useEffect(() => {
+    if (!playbackRobotId && robots.length > 0) {
+      setPlaybackRobotId(robots[0].id);
+    }
+  }, [playbackRobotId, robots]);
+
+  const pathQuery = useAuthedQuery<RobotPathResponse>(
+    ["robot-path", siteId, playbackRobotId],
+    playbackRobotId ? `/robots/${playbackRobotId}/path?interval_seconds=20` : undefined
+  );
 
   useEffect(() => {
     if (!socket) {
@@ -62,11 +91,24 @@ export default function FacilityPage() {
     };
   }, [socket]);
 
+  const floorplans = floorplansQuery.data ?? [];
+
+  useEffect(() => {
+    if (!selectedFloorplanId && floorplans[0]?.id) {
+      setSelectedFloorplanId(floorplans[0].id);
+    }
+  }, [floorplans, selectedFloorplanId]);
+
   const floorplan = useMemo(
     () => floorplans.find((entry) => entry.id === selectedFloorplanId) ?? floorplans[0],
     [floorplans, selectedFloorplanId]
   );
-  const floorplanImageUrl = floorplan?.imageUrl;
+
+  const selectedRobot = robots.find((robot) => robot.id === playbackRobotId);
+
+  const pathPoints = (pathQuery.data?.points ?? []).filter(
+    (entry) => !floorplan?.id || entry.floorplanId === floorplan.id
+  );
 
   const proximityEvents = (assetsQuery.data ?? [])
     .flatMap((asset) => asset.proximityEvents.map((event) => ({ ...event, assetName: asset.name })))
@@ -82,7 +124,7 @@ export default function FacilityPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle>Facility map</CardTitle>
-                <CardMeta>Full-width map with floorplan overlay and live layers</CardMeta>
+                <CardMeta>Full-width map with floorplan overlay, live layers, and playback trails</CardMeta>
               </div>
               <select
                 className="rounded-full border border-border bg-white px-3 py-2 text-sm"
@@ -100,11 +142,11 @@ export default function FacilityPage() {
             <div className="mt-4">
               <FacilityMap
                 className="h-[620px]"
-                floorplanImageUrl={floorplanImageUrl}
+                floorplanImageUrl={floorplan?.imageUrl}
                 zones={showZones ? floorplan?.zones ?? [] : []}
                 robots={
                   showRobots
-                    ? (liveRobots ?? robotsQuery.data ?? []).map((robot) => ({
+                    ? robots.map((robot) => ({
                         id: robot.id,
                         name: robot.name,
                         status: robot.status,
@@ -113,7 +155,28 @@ export default function FacilityPage() {
                       }))
                     : []
                 }
-                assets={showAssets ? (assetsQuery.data ?? []).map((asset) => ({ id: asset.id, name: asset.name, type: asset.type, x: asset.x, y: asset.y })) : []}
+                assets={
+                  showAssets
+                    ? (assetsQuery.data ?? []).map((asset) => ({
+                        id: asset.id,
+                        name: asset.name,
+                        type: asset.type,
+                        x: asset.x,
+                        y: asset.y
+                      }))
+                    : []
+                }
+                trails={
+                  pathPoints.length
+                    ? [
+                        {
+                          robotId: playbackRobotId,
+                          points: pathPoints.map((point) => ({ x: point.x, y: point.y }))
+                        }
+                      ]
+                    : []
+                }
+                playbackPercent={playbackPosition}
               />
             </div>
           </Card>
@@ -140,7 +203,20 @@ export default function FacilityPage() {
 
           <Card>
             <CardTitle>Playback scrubber</CardTitle>
-            <CardMeta>Path playback stub for Phase 1</CardMeta>
+            <CardMeta>Historical path playback for selected robot</CardMeta>
+            <select
+              className="mt-3 w-full rounded-2xl border border-border bg-white px-3 py-2 text-sm"
+              value={playbackRobotId}
+              onChange={(event) => setPlaybackRobotId(event.target.value)}
+              aria-label="Playback robot"
+            >
+              <option value="">Select robot</option>
+              {robots.map((robot) => (
+                <option key={robot.id} value={robot.id}>
+                  {robot.name}
+                </option>
+              ))}
+            </select>
             <input
               type="range"
               min={0}
@@ -150,7 +226,10 @@ export default function FacilityPage() {
               onChange={(event) => setPlaybackPosition(Number(event.target.value))}
               className="mt-3 w-full"
             />
-            <p className="mt-2 text-xs text-muted">Playback position: {playbackPosition}%</p>
+            <p className="mt-2 text-xs text-muted">
+              Playback: {playbackPosition}% • {selectedRobot?.name ?? "No robot selected"} • {pathPoints.length}/
+              {pathQuery.data?.totalPoints ?? 0} points
+            </p>
           </Card>
 
           <Card>

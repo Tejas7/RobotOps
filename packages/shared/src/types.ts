@@ -171,6 +171,66 @@ export interface ApiKey {
   revokedAt: string | null;
 }
 
+export interface Integration {
+  id: string;
+  tenantId: string;
+  type: "wms" | "erp" | "wes" | "webhook" | "slack" | "teams" | "email" | "sso" | "rtls_partner";
+  name: string;
+  status: "active" | "disabled" | "error";
+  config: Record<string, unknown>;
+  lastSyncAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationTestRun {
+  id: string;
+  integrationId: string;
+  tenantId: string;
+  status: "success" | "error";
+  message: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SavedView {
+  id: string;
+  tenantId: string;
+  createdBy: string;
+  page: string;
+  name: string;
+  filters: Record<string, unknown>;
+  layout: Record<string, unknown>;
+  isShared: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoleDashboardDefault {
+  id: string;
+  tenantId: string;
+  role: Role;
+  page: string;
+  savedViewId: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardConfig {
+  id: string;
+  tenantId: string;
+  name: string;
+  schemaVersion: "1";
+  widgets: Array<Record<string, unknown>>;
+  rules: Record<string, unknown>;
+  appliesTo: Record<string, unknown>;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AuditLog {
   id: string;
   tenantId: string;
@@ -183,6 +243,43 @@ export interface AuditLog {
   diff: unknown;
   ip: string;
   userAgent: string;
+}
+
+export interface DashboardConfigValidationError {
+  path: string;
+  message: string;
+}
+
+export interface TelemetryBucket {
+  timestamp: string;
+  value: number;
+  count: number;
+  min?: number;
+  max?: number;
+}
+
+export interface TelemetrySeriesResponse {
+  robotId: string;
+  metric: string;
+  from: string;
+  to: string;
+  totalPoints: number;
+  downsampled: boolean;
+  aggregation: "avg" | "min" | "max" | "last";
+  bucketSeconds: number | null;
+  maxPoints: number;
+  points: TelemetryBucket[];
+}
+
+export interface RobotPathPoint {
+  id: string;
+  robotId: string;
+  floorplanId: string;
+  x: number;
+  y: number;
+  headingDegrees: number;
+  confidence: number;
+  timestamp: string;
 }
 
 export interface CopilotThread {

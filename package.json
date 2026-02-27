@@ -11,6 +11,7 @@
     "dev:web": "npm --workspace @robotops/web run dev",
     "dev:api": "npm --workspace @robotops/api run start:dev",
     "qa:phase1": "node scripts/phase1-qa.mjs",
+    "qa:phase2": "node scripts/phase2-qa.mjs",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

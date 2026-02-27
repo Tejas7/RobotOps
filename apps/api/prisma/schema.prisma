@@ -18,12 +18,18 @@ model Tenant {
   zones         Zone[]
   vendors       RobotVendor[]
   robots        Robot[]
+  robotPathPoints RobotPathPoint[]
   missions      Mission[]
   incidents     Incident[]
   assets        Asset[]
   proximities   ProximityEvent[]
+  integrations  Integration[]
+  integrationTestRuns IntegrationTestRun[]
   apiKeys       ApiKey[]
   auditLogs     AuditLog[]
+  savedViews    SavedView[]
+  roleDashboardDefaults RoleDashboardDefault[]
+  dashboardConfigs DashboardConfig[]
   copilotThreads CopilotThread[]
 }
 
@@ -131,6 +137,7 @@ model Robot {
   missionEvents MissionEvent[]
   incidents     Incident[]
   telemetries   TelemetryPoint[]
+  pathPoints    RobotPathPoint[]
   proximities   ProximityEvent[]
 }
 
@@ -252,6 +259,32 @@ model ApiKey {
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+model Integration {
+  id          String   @id
+  tenantId    String
+  type        String
+  name        String
+  status      String
+  config      Json
+  lastSyncAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  testRuns    IntegrationTestRun[]
+}
+
+model IntegrationTestRun {
+  id            String      @id
+  integrationId String
+  tenantId      String
+  status        String
+  message       String
+  details       Json
+  createdAt     DateTime
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
 model AuditLog {
   id           String   @id
   tenantId     String
@@ -265,6 +298,51 @@ model AuditLog {
   ip           String
   userAgent    String
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model SavedView {
+  id         String   @id
+  tenantId   String
+  createdBy  String
+  page       String
+  name       String
+  filters    Json
+  layout     Json
+  isShared   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  defaults   RoleDashboardDefault[]
+}
+
+model RoleDashboardDefault {
+  id          String    @id
+  tenantId    String
+  role        String
+  page        String
+  savedViewId String
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  savedView   SavedView @relation(fields: [savedViewId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, role, page])
+}
+
+model DashboardConfig {
+  id            String   @id
+  tenantId      String
+  name          String
+  schemaVersion String
+  widgets       Json
+  rules         Json
+  appliesTo     Json
+  isActive      Boolean  @default(false)
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 model CopilotThread {
@@ -288,6 +366,23 @@ model CopilotMessage {
   thread    CopilotThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 }
 
+model RobotPathPoint {
+  id             String   @id
+  tenantId       String
+  robotId        String
+  floorplanId    String
+  x              Float
+  y              Float
+  headingDegrees Float
+  confidence     Float
+  timestamp      DateTime
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  robot          Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, robotId, timestamp])
+  @@index([tenantId, floorplanId, timestamp])
+}
+
 model TelemetryPoint {
   id         String   @id
   tenantId   String
@@ -298,4 +393,5 @@ model TelemetryPoint {
   robot      Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
 
   @@index([robotId, metric, timestamp])
+  @@index([tenantId, robotId, metric, timestamp])
 }

@@ -5,7 +5,12 @@ const prisma = new PrismaClient();
 async function main() {
   await prisma.copilotMessage.deleteMany();
   await prisma.copilotThread.deleteMany();
+  await prisma.roleDashboardDefault.deleteMany();
+  await prisma.savedView.deleteMany();
+  await prisma.dashboardConfig.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.integrationTestRun.deleteMany();
+  await prisma.integration.deleteMany();
   await prisma.apiKey.deleteMany();
   await prisma.proximityEvent.deleteMany();
   await prisma.asset.deleteMany();
@@ -13,6 +18,7 @@ async function main() {
   await prisma.incident.deleteMany();
   await prisma.missionEvent.deleteMany();
   await prisma.mission.deleteMany();
+  await prisma.robotPathPoint.deleteMany();
   await prisma.telemetryPoint.deleteMany();
   await prisma.robot.deleteMany();
   await prisma.robotVendor.deleteMany();
@@ -1512,6 +1518,225 @@ async function main() {
     ]
   });
 
+  await prisma.integration.createMany({
+    data: [
+      {
+        id: "ig1",
+        tenantId: "t1",
+        type: "wms",
+        name: "North WMS Connector",
+        status: "active",
+        config: {
+          endpoint: "https://wms.example.internal",
+          warehouse: "TOR-01",
+          syncIntervalMinutes: 5
+        },
+        lastSyncAt: new Date("2026-02-26T23:10:00Z"),
+        createdAt: new Date("2026-02-01T09:00:00Z"),
+        updatedAt: new Date("2026-02-26T23:10:00Z")
+      },
+      {
+        id: "ig2",
+        tenantId: "t1",
+        type: "slack",
+        name: "Ops Slack Alerts",
+        status: "error",
+        config: {
+          channel: "#robotops-alerts",
+          severityThreshold: "major"
+        },
+        lastSyncAt: new Date("2026-02-26T22:44:00Z"),
+        createdAt: new Date("2026-02-03T15:00:00Z"),
+        updatedAt: new Date("2026-02-26T22:44:00Z")
+      },
+      {
+        id: "ig3",
+        tenantId: "t1",
+        type: "webhook",
+        name: "Incident Webhook Sink",
+        status: "disabled",
+        config: {
+          endpoint: "https://hooks.example.internal/robotops/incidents"
+        },
+        lastSyncAt: null,
+        createdAt: new Date("2026-02-10T11:00:00Z"),
+        updatedAt: new Date("2026-02-10T11:00:00Z")
+      }
+    ]
+  });
+
+  await prisma.integrationTestRun.createMany({
+    data: [
+      {
+        id: "itr1",
+        integrationId: "ig1",
+        tenantId: "t1",
+        status: "success",
+        message: "Connection OK. Sync sample payload accepted.",
+        details: {
+          latency_ms: 142,
+          checked_at: "2026-02-26T23:10:00Z"
+        },
+        createdAt: new Date("2026-02-26T23:10:00Z")
+      },
+      {
+        id: "itr2",
+        integrationId: "ig2",
+        tenantId: "t1",
+        status: "error",
+        message: "Slack webhook returned 403 for current token.",
+        details: {
+          code: "AUTH_FORBIDDEN",
+          checked_at: "2026-02-26T22:44:00Z"
+        },
+        createdAt: new Date("2026-02-26T22:44:00Z")
+      },
+      {
+        id: "itr3",
+        integrationId: "ig2",
+        tenantId: "t1",
+        status: "success",
+        message: "Connection OK after token refresh.",
+        details: {
+          latency_ms: 196,
+          checked_at: "2026-02-25T20:05:00Z"
+        },
+        createdAt: new Date("2026-02-25T20:05:00Z")
+      }
+    ]
+  });
+
+  await prisma.savedView.createMany({
+    data: [
+      {
+        id: "sv1",
+        tenantId: "t1",
+        createdBy: "u2",
+        page: "overview",
+        name: "Ops Daily Snapshot",
+        filters: {
+          site_id: "s1",
+          time_range: "24h",
+          robot_tags: ["amr"]
+        },
+        layout: {
+          pinnedWidgets: ["active_robots", "incidents_open", "mission_throughput"]
+        },
+        isShared: true,
+        createdAt: new Date("2026-02-11T08:00:00Z"),
+        updatedAt: new Date("2026-02-26T18:00:00Z")
+      },
+      {
+        id: "sv2",
+        tenantId: "t1",
+        createdBy: "u3",
+        page: "analytics",
+        name: "Reliability Deep Dive",
+        filters: {
+          site_id: "s1",
+          time_range: "7d",
+          vendor: "v2"
+        },
+        layout: {
+          sections: ["uptime", "failure_modes", "interventions"]
+        },
+        isShared: true,
+        createdAt: new Date("2026-02-14T10:00:00Z"),
+        updatedAt: new Date("2026-02-26T19:15:00Z")
+      },
+      {
+        id: "sv3",
+        tenantId: "t1",
+        createdBy: "u1",
+        page: "fleet",
+        name: "Low Battery Watch",
+        filters: {
+          site_id: "s1",
+          battery_min: 0,
+          battery_max: 35
+        },
+        layout: {
+          columns: ["robot", "battery", "status", "last_seen"]
+        },
+        isShared: false,
+        createdAt: new Date("2026-02-18T13:00:00Z"),
+        updatedAt: new Date("2026-02-26T20:10:00Z")
+      }
+    ]
+  });
+
+  await prisma.roleDashboardDefault.createMany({
+    data: [
+      {
+        id: "rd1",
+        tenantId: "t1",
+        role: "OpsManager",
+        page: "overview",
+        savedViewId: "sv1",
+        createdBy: "u1",
+        createdAt: new Date("2026-02-20T09:00:00Z"),
+        updatedAt: new Date("2026-02-20T09:00:00Z")
+      },
+      {
+        id: "rd2",
+        tenantId: "t1",
+        role: "Engineer",
+        page: "analytics",
+        savedViewId: "sv2",
+        createdBy: "u1",
+        createdAt: new Date("2026-02-20T09:05:00Z"),
+        updatedAt: new Date("2026-02-20T09:05:00Z")
+      }
+    ]
+  });
+
+  await prisma.dashboardConfig.createMany({
+    data: [
+      {
+        id: "dc1",
+        tenantId: "t1",
+        name: "Ops Core Dashboard",
+        schemaVersion: "1",
+        widgets: [
+          { id: "kpi_active_robots", type: "kpi", metric: "active_robots" },
+          { id: "chart_failure_modes", type: "bar", metric: "incident_categories" }
+        ],
+        rules: {
+          refreshSeconds: 30
+        },
+        appliesTo: {
+          role: "OpsManager",
+          site_ids: ["s1", "s2"]
+        },
+        isActive: true,
+        createdBy: "u1",
+        createdAt: new Date("2026-02-12T08:00:00Z"),
+        updatedAt: new Date("2026-02-26T16:20:00Z")
+      },
+      {
+        id: "dc2",
+        tenantId: "t1",
+        name: "Engineer Deep Ops",
+        schemaVersion: "1",
+        widgets: [
+          { id: "chart_telemetry", type: "line", metric: "battery" },
+          { id: "table_audit", type: "table", metric: "audit_events" }
+        ],
+        rules: {
+          refreshSeconds: 60
+        },
+        appliesTo: {
+          role: "Engineer",
+          site_ids: ["s1"]
+        },
+        isActive: false,
+        createdBy: "u3",
+        createdAt: new Date("2026-02-16T12:00:00Z"),
+        updatedAt: new Date("2026-02-22T12:00:00Z")
+      }
+    ]
+  });
+
   await prisma.auditLog.createMany({
     data: [
       {
@@ -1784,6 +2009,57 @@ async function main() {
   }
 
   await prisma.telemetryPoint.createMany({ data: telemetryRows });
+
+  const pathRows: Array<{
+    id: string;
+    tenantId: string;
+    robotId: string;
+    floorplanId: string;
+    x: number;
+    y: number;
+    headingDegrees: number;
+    confidence: number;
+    timestamp: Date;
+  }> = [];
+
+  for (let index = 0; index < 180; index += 1) {
+    const ts = new Date(Date.now() - (180 - index) * 20 * 1000);
+    pathRows.push({
+      id: `rp-r1-${index}`,
+      tenantId: "t1",
+      robotId: "r1",
+      floorplanId: "f1",
+      x: 120 + Math.sin(index / 8) * 24 + index * 0.2,
+      y: 62 + Math.cos(index / 10) * 10,
+      headingDegrees: (index * 5) % 360,
+      confidence: 0.88,
+      timestamp: ts
+    });
+    pathRows.push({
+      id: `rp-r2-${index}`,
+      tenantId: "t1",
+      robotId: "r2",
+      floorplanId: "f1",
+      x: 260 - index * 0.18,
+      y: 128 + Math.sin(index / 7) * 12,
+      headingDegrees: (220 + index * 3) % 360,
+      confidence: 0.8,
+      timestamp: ts
+    });
+    pathRows.push({
+      id: `rp-r9-${index}`,
+      tenantId: "t1",
+      robotId: "r9",
+      floorplanId: "f2",
+      x: 92 + index * 0.26,
+      y: 146 - Math.sin(index / 9) * 18,
+      headingDegrees: (300 + index * 4) % 360,
+      confidence: 0.9,
+      timestamp: ts
+    });
+  }
+
+  await prisma.robotPathPoint.createMany({ data: pathRows });
 
   console.log("Seed complete");
 }

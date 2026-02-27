@@ -31,11 +31,18 @@ interface MapZone {
   polygon: Point[];
 }
 
+interface MapTrail {
+  robotId: string;
+  points: Point[];
+}
+
 interface FacilityMapProps {
   floorplanImageUrl?: string;
   robots?: MapRobot[];
   assets?: MapAsset[];
   zones?: MapZone[];
+  trails?: MapTrail[];
+  playbackPercent?: number;
   className?: string;
 }
 
@@ -51,6 +58,8 @@ export function FacilityMap({
   robots = [],
   assets = [],
   zones = [],
+  trails = [],
+  playbackPercent = 100,
   className = "h-[460px]"
 }: FacilityMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -179,6 +188,61 @@ export function FacilityMap({
       });
     }
   }, [zones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) {
+      return;
+    }
+
+    const sourceId = "robot-trails-source";
+    const layerId = "robot-trails-layer";
+
+    const features = trails
+      .map((trail) => {
+        const maxIndex = Math.max(2, Math.ceil((trail.points.length * playbackPercent) / 100));
+        const clipped = trail.points.slice(0, maxIndex);
+        if (clipped.length < 2) {
+          return null;
+        }
+
+        return {
+          type: "Feature",
+          properties: {
+            robotId: trail.robotId
+          },
+          geometry: {
+            type: "LineString",
+            coordinates: clipped.map((point) => toLngLat(point))
+          }
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    const data = {
+      type: "FeatureCollection",
+      features
+    };
+
+    if (map.getSource(sourceId)) {
+      (map.getSource(sourceId) as maplibregl.GeoJSONSource).setData(data as any);
+    } else {
+      map.addSource(sourceId, {
+        type: "geojson",
+        data: data as any
+      });
+      map.addLayer({
+        id: layerId,
+        type: "line",
+        source: sourceId,
+        paint: {
+          "line-color": "#f97316",
+          "line-opacity": 0.85,
+          "line-width": 2
+        }
+      });
+    }
+  }, [trails, playbackPercent]);
 
   useEffect(() => {
     const map = mapRef.current;

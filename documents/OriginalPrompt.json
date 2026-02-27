@@ -1,0 +1,1198 @@
+{
+  "project": {
+    "name": "RobotOps",
+    "tagline": "Robotics operations and orchestration dashboard for heterogeneous fleets",
+    "positioning": {
+      "one_liner": "A secure, scalable robot operations platform for monitoring, diagnostics, mission tracking, orchestration, and facility aware insights.",
+      "target_users": [
+        "Enterprise operations managers running robots across facilities",
+        "Robotics engineering teams supporting deployments in the field",
+        "System integrators connecting robots with WMS, ERP, WES, and facility systems",
+        "Remote operators handling exceptions and teleoperation"
+      ],
+      "product_principles": [
+        "Single pane of glass for heterogeneous robots and sites",
+        "Facility context first: everything happens somewhere",
+        "Operational clarity: incidents, root cause hints, and next action",
+        "Engineer friendly: APIs, audit logs, configuration as code",
+        "Security and tenancy by default"
+      ],
+      "explicit_constraints": [
+        "Do not copy any vendor UI, branding, icons, layout, or text verbatim",
+        "Create an original visual design system and information architecture",
+        "Implement in a clean room manner using only this specification",
+        "Functionality can be inspired by publicly described RobOps themes, but do not attempt an exact replica of any proprietary platform"
+      ]
+    },
+    "sources_of_inspiration_non_copied": {
+      "capability_themes": [
+        "Robot orchestration with a shared map and common API",
+        "Developer focused robot ops console with monitoring, diagnostics, and safe controls",
+        "Mission tracking and historical analysis",
+        "Facility spatial view connecting robots, zones, and operational context",
+        "RTLS style tracking of robots and non robot assets on one screen",
+        "Copilot style conversational analytics for robot ops"
+      ],
+      "public_concepts_reference": {
+        "space_intelligence_like": "Facility centric orchestration and a holistic view that combines robotic and spatial operational signals",
+        "ground_control_like": "Developer portal style management of robots, credentials, integrations, and remote ops",
+        "mission_tracking_like": "Track missions, status, KPIs, and drilldown timelines",
+        "api_like": "REST and streaming style access to robot data and actions",
+        "configuration_like": "Configuration as code for customizing widgets and views"
+      }
+    }
+  },
+  "tech_stack": {
+    "frontend": {
+      "framework": "Next.js 14",
+      "language": "TypeScript",
+      "ui": "Tailwind CSS plus shadcn ui",
+      "state": "TanStack Query for server state, Zustand for local UI state",
+      "charts": "Recharts",
+      "maps": "MapLibre GL or Leaflet for facility maps plus custom 2D floorplan overlay",
+      "realtime": "WebSocket or Server Sent Events client",
+      "auth": "NextAuth or custom JWT",
+      "forms": "React Hook Form plus Zod validation"
+    },
+    "backend": {
+      "runtime": "Node.js 20",
+      "framework": "NestJS or Fastify",
+      "database": "PostgreSQL for core entities, TimescaleDB extension optional for time series telemetry",
+      "cache": "Redis for sessions and hot dashboards",
+      "message_bus": "NATS or Kafka optional for streaming ingestion",
+      "storage": "S3 compatible for logs and artifacts",
+      "observability": "OpenTelemetry tracing, structured logs, metrics endpoint"
+    },
+    "deployment": {
+      "local_dev": "Docker Compose",
+      "prod": "Kubernetes optional, or container based hosting",
+      "security": "TLS everywhere, secrets in vault, least privilege roles"
+    }
+  },
+  "domain_model": {
+    "multi_tenancy": {
+      "tenant": {
+        "id": "uuid",
+        "name": "string",
+        "plan": "free | pro | enterprise",
+        "created_at": "timestamp"
+      },
+      "site": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "name": "string",
+        "address": "string",
+        "timezone": "IANA string",
+        "floorplans": "array of floorplan ids",
+        "created_at": "timestamp"
+      },
+      "floorplan": {
+        "id": "uuid",
+        "site_id": "uuid",
+        "name": "string",
+        "image_url": "string",
+        "scale_meters_per_pixel": "number",
+        "origin": { "x": "number", "y": "number" },
+        "rotation_degrees": "number",
+        "zones": "array of zone ids"
+      },
+      "zone": {
+        "id": "uuid",
+        "floorplan_id": "uuid",
+        "name": "string",
+        "type": "restricted | charging | staging | pickup | dropoff | pedestrian | hazard",
+        "polygon": "array of points",
+        "rules": {
+          "max_speed_mps": "number",
+          "requires_operator_ack": "boolean",
+          "allowed_robot_tags": "array of strings"
+        }
+      }
+    },
+    "robot_fleet": {
+      "robot_vendor": {
+        "id": "uuid",
+        "name": "string",
+        "integration_type": "agent | edge_gateway | standard_adapter",
+        "supported_protocols": [
+          "custom_rest",
+          "mqtt",
+          "ros2_bridge",
+          "vda_5050_adapter",
+          "open_rmf_adapter",
+          "massrobotics_amr_adapter"
+        ]
+      },
+      "robot": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "vendor_id": "uuid",
+        "name": "string",
+        "model": "string",
+        "serial": "string",
+        "tags": "array of strings",
+        "status": "online | offline | degraded | maintenance | emergency_stop",
+        "battery_percent": "number",
+        "last_seen_at": "timestamp",
+        "current_pose": {
+          "floorplan_id": "uuid",
+          "x": "number",
+          "y": "number",
+          "heading_degrees": "number",
+          "confidence": "number"
+        },
+        "health": {
+          "cpu_percent": "number",
+          "memory_percent": "number",
+          "temp_c": "number",
+          "network_rssi": "number",
+          "disk_percent": "number"
+        },
+        "capabilities": [
+          "navigate",
+          "dock",
+          "lift",
+          "carry",
+          "scan",
+          "teleop",
+          "deliver",
+          "inventory_count"
+        ],
+        "connectivity": {
+          "connection": "wifi | lte | ethernet",
+          "ip": "string",
+          "firmware": "string",
+          "agent_version": "string",
+          "edge_id": "uuid or null"
+        },
+        "created_at": "timestamp"
+      },
+      "edge_gateway": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "name": "string",
+        "status": "online | offline",
+        "last_seen_at": "timestamp",
+        "connected_robots": "array of robot ids"
+      }
+    },
+    "operations": {
+      "mission": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "name": "string",
+        "type": "pickup_dropoff | patrol | inventory | cleaning | custom",
+        "priority": "low | normal | high | critical",
+        "created_by_user_id": "uuid",
+        "assigned_robot_id": "uuid or null",
+        "state": "queued | running | blocked | succeeded | failed | canceled",
+        "start_time": "timestamp or null",
+        "end_time": "timestamp or null",
+        "kpis": {
+          "duration_s": "number",
+          "distance_m": "number",
+          "stops_count": "number",
+          "interventions_count": "number",
+          "energy_used_wh": "number"
+        },
+        "route": {
+          "waypoints": "array of waypoint objects",
+          "planned_path_polyline": "array of points"
+        },
+        "failure": {
+          "code": "string",
+          "message": "string",
+          "last_event_id": "uuid"
+        }
+      },
+      "mission_event": {
+        "id": "uuid",
+        "mission_id": "uuid",
+        "robot_id": "uuid",
+        "timestamp": "timestamp",
+        "type": "state_change | waypoint_reached | warning | error | operator_action | traffic_event",
+        "payload": "json"
+      },
+      "incident": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "robot_id": "uuid or null",
+        "mission_id": "uuid or null",
+        "severity": "info | warning | major | critical",
+        "category": "navigation | traffic | battery | connectivity | hardware | safety | integration",
+        "status": "open | acknowledged | mitigated | resolved",
+        "title": "string",
+        "description": "string",
+        "created_at": "timestamp",
+        "acknowledged_by": "uuid or null",
+        "resolved_at": "timestamp or null",
+        "timeline": "array of incident_event ids"
+      },
+      "incident_event": {
+        "id": "uuid",
+        "incident_id": "uuid",
+        "timestamp": "timestamp",
+        "type": "created | acknowledged | note | automation | teleop_started | teleop_ended | resolved",
+        "message": "string",
+        "meta": "json"
+      },
+      "teleoperation_session": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "robot_id": "uuid",
+        "started_by": "uuid",
+        "started_at": "timestamp",
+        "ended_at": "timestamp or null",
+        "reason": "incident_response | testing | recovery | training",
+        "controls": {
+          "video_stream_url": "string",
+          "latency_ms": "number",
+          "enabled_actions": "array of strings"
+        }
+      }
+    },
+    "rtls_and_assets": {
+      "asset": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "type": "forklift | pallet_jack | cart | person | door | conveyor | station",
+        "name": "string",
+        "tags": "array of strings",
+        "current_pose": {
+          "floorplan_id": "uuid",
+          "x": "number",
+          "y": "number",
+          "heading_degrees": "number",
+          "confidence": "number"
+        },
+        "last_seen_at": "timestamp"
+      },
+      "proximity_event": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid",
+        "timestamp": "timestamp",
+        "robot_id": "uuid",
+        "asset_id": "uuid",
+        "distance_m": "number",
+        "risk_level": "low | medium | high",
+        "zone_id": "uuid or null"
+      }
+    },
+    "integrations_and_config": {
+      "integration": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "type": "wms | erp | wes | webhook | slack | teams | email | sso | rtls_partner",
+        "name": "string",
+        "status": "active | disabled | error",
+        "config": "json",
+        "last_sync_at": "timestamp or null"
+      },
+      "api_key": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "name": "string",
+        "scopes": [
+          "robots.read",
+          "robots.control",
+          "missions.read",
+          "missions.write",
+          "incidents.read",
+          "incidents.write",
+          "audit.read",
+          "integrations.manage"
+        ],
+        "created_at": "timestamp",
+        "last_used_at": "timestamp or null",
+        "revoked_at": "timestamp or null"
+      },
+      "audit_log": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "timestamp": "timestamp",
+        "actor_type": "user | api_key | system",
+        "actor_id": "uuid",
+        "action": "string",
+        "resource_type": "robot | mission | incident | integration | config",
+        "resource_id": "uuid",
+        "diff": "json",
+        "ip": "string",
+        "user_agent": "string"
+      },
+      "dashboard_config": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "name": "string",
+        "schema_version": "1",
+        "widgets": "array of widget configs",
+        "rules": "json",
+        "applies_to": {
+          "robot_tags": "array of strings",
+          "site_ids": "array of uuid"
+        }
+      }
+    },
+    "copilot": {
+      "copilot_thread": {
+        "id": "uuid",
+        "tenant_id": "uuid",
+        "site_id": "uuid or null",
+        "created_by": "uuid",
+        "created_at": "timestamp",
+        "messages": "array of copilot_message ids"
+      },
+      "copilot_message": {
+        "id": "uuid",
+        "thread_id": "uuid",
+        "timestamp": "timestamp",
+        "role": "user | assistant | tool",
+        "content": "string",
+        "tool_calls": "array of tool call objects",
+        "citations": "array of references to internal data queries"
+      }
+    }
+  },
+  "security_and_roles": {
+    "roles": [
+      { "name": "Owner", "permissions": "all" },
+      {
+        "name": "OpsManager",
+        "permissions": [
+          "robots.read",
+          "missions.read",
+          "missions.write",
+          "incidents.read",
+          "incidents.write",
+          "teleop.start",
+          "teleop.stop",
+          "analytics.read"
+        ]
+      },
+      {
+        "name": "Engineer",
+        "permissions": [
+          "robots.read",
+          "robots.control",
+          "missions.read",
+          "incidents.read",
+          "audit.read",
+          "integrations.read",
+          "config.read",
+          "config.write"
+        ]
+      },
+      {
+        "name": "Operator",
+        "permissions": [
+          "robots.read",
+          "missions.read",
+          "incidents.read",
+          "incidents.ack",
+          "teleop.start",
+          "teleop.stop"
+        ]
+      },
+      {
+        "name": "Viewer",
+        "permissions": [
+          "robots.read",
+          "missions.read",
+          "analytics.read"
+        ]
+      }
+    ],
+    "authn": {
+      "modes": [
+        "email_password",
+        "sso_saml",
+        "oidc"
+      ],
+      "session": {
+        "token_type": "jwt",
+        "rotation_minutes": 30,
+        "refresh": true
+      }
+    },
+    "authz": {
+      "enforcement": "backend enforced RBAC plus tenant isolation everywhere",
+      "notes": [
+        "All queries must be filtered by tenant_id",
+        "Robot control endpoints require robots.control",
+        "Audit log access requires audit.read",
+        "Teleoperation requires teleop.start"
+      ]
+    }
+  },
+  "ui_design_system": {
+    "brand": {
+      "name": "RobotOps",
+      "visual_direction": "Wealthsimple inspired fintech minimalism applied to robotics operations",
+      "goals": [
+        "Calm, modern, premium",
+        "Extreme clarity with minimal visual noise",
+        "Soft surfaces, subtle depth, clean typography",
+        "High trust and accessibility"
+      ],
+      "non_goals": [
+        "No industrial control room styling",
+        "No cyber neon, heavy grids, or harsh contrast",
+        "No copying any vendor UI layouts or icons"
+      ]
+    },
+    "theme": {
+      "modes": [
+        "light",
+        "dark"
+      ],
+      "default_mode": "light",
+      "color_strategy": {
+        "rule_1": "Use neutral base surfaces with one primary accent and one success and warning family",
+        "rule_2": "Avoid more than one accent color in a single screen",
+        "rule_3": "Use semantic colors sparingly and only for status",
+        "rule_4": "Prefer subtle tinted backgrounds for status over saturated fills"
+      },
+      "typography": {
+        "style": "Clean fintech typography, large readable headings, generous line height",
+        "scale": {
+          "display": "Used only on Overview key metrics",
+          "h1": "Page title",
+          "h2": "Section title",
+          "h3": "Card title",
+          "body": "Default",
+          "caption": "Meta and helper text"
+        },
+        "rules": [
+          "Use sentence case everywhere",
+          "Avoid all caps except tiny chips",
+          "Numbers use tabular lining figures if available"
+        ]
+      },
+      "spacing": {
+        "philosophy": "Whitespace is the brand",
+        "rules": [
+          "Use an 8px spacing system",
+          "Cards have generous padding",
+          "Tables have comfortable row height"
+        ]
+      },
+      "shape": {
+        "radius": {
+          "cards": "large rounded corners",
+          "buttons": "pill or near pill",
+          "inputs": "rounded"
+        },
+        "shadows": {
+          "style": "Very soft elevation, almost invisible",
+          "rules": [
+            "No heavy drop shadows",
+            "Use borders and surface contrast first, shadow second"
+          ]
+        }
+      }
+    },
+    "layout": {
+      "overall": "Simple left navigation with top header",
+      "nav": {
+        "left_sidebar": {
+          "style": "Minimal icons, lots of spacing, clear active state",
+          "items": [
+            "Overview",
+            "Fleet",
+            "Missions",
+            "Facility",
+            "Incidents",
+            "Teleoperation",
+            "Analytics",
+            "Integrations",
+            "Developer",
+            "Settings"
+          ]
+        },
+        "top_header": {
+          "elements": [
+            "Site selector",
+            "Time range selector",
+            "Global search",
+            "Notifications",
+            "User menu"
+          ],
+          "style_rules": [
+            "Sticky header",
+            "Subtle bottom border",
+            "No loud background"
+          ]
+        }
+      },
+      "grid": {
+        "max_width": "Use a centered max width on content heavy pages, full width only for maps",
+        "rules": [
+          "Prefer two column card layouts on desktop",
+          "Maps and tables can go full width"
+        ]
+      }
+    },
+    "components": {
+      "buttons": {
+        "primary": "Solid fill, high contrast text, rounded",
+        "secondary": "Subtle outline or tinted background",
+        "tertiary": "Text only",
+        "rules": [
+          "No aggressive gradients",
+          "Disable states are clear",
+          "Loading shows subtle spinner"
+        ]
+      },
+      "cards": {
+        "style": "Clean bordered cards with soft surface",
+        "rules": [
+          "Card headers are small and calm",
+          "Keep cards simple, avoid dense widgets"
+        ]
+      },
+      "tables": {
+        "style": "Fintech grade tables with strong readability",
+        "rules": [
+          "Sticky header row",
+          "Row hover is subtle",
+          "Inline filters are minimal",
+          "Use a detail drawer instead of cramming columns"
+        ]
+      },
+      "chips_and_status": {
+        "chip_style": "Pill chips with minimal fill",
+        "robot_status": {
+          "online": "success",
+          "offline": "neutral",
+          "degraded": "warning",
+          "maintenance": "info",
+          "emergency_stop": "danger"
+        },
+        "rules": [
+          "Status shows as a small chip plus an icon",
+          "Never rely on color alone"
+        ]
+      },
+      "charts": {
+        "style": "Minimal chart chrome, light grid lines, strong labels",
+        "rules": [
+          "Show tooltips on hover",
+          "Prefer simple line and bar charts",
+          "Avoid busy multi series unless necessary"
+        ]
+      },
+      "motion": {
+        "style": "Subtle micro interactions",
+        "rules": [
+          "Use small fades and slide ups on drawers",
+          "Avoid bouncy animations",
+          "Use skeleton loading placeholders"
+        ]
+      },
+      "map": {
+        "style": "Clean map with minimal overlays",
+        "rules": [
+          "Layer toggles are inside a calm panel",
+          "Robot markers are simple, not futuristic",
+          "Use tasteful trails for movement playback"
+        ]
+      }
+    },
+    "content_and_copy": {
+      "tone": "Clear, friendly, direct",
+      "rules": [
+        "Prefer short labels",
+        "Use helper text where needed",
+        "Avoid jargon on overview pages, keep jargon in detail views"
+      ],
+      "empty_states": [
+        "Use a friendly one line explanation",
+        "Offer a single primary action"
+      ]
+    },
+    "accessibility": {
+      "targets": [
+        "WCAG AA contrast in both modes",
+        "Keyboard navigable tables, drawers, and map controls",
+        "Screen reader labels on all controls"
+      ]
+    }
+  },
+  "implementation_notes_for_codex": {
+    "design_guardrails": [
+      "Do not replicate any existing product layout",
+      "Use original spacing, component styling, and iconography",
+      "Prioritize whitespace and calm surfaces",
+      "Keep pages intentionally uncluttered, use drawers for drill down"
+    ],
+    "recommended_component_library": {
+      "base": "shadcn ui",
+      "icons": "lucide react",
+      "animation": "framer motion",
+      "charts": "recharts"
+    },
+    "page_level_rules": [
+      "Overview is card based with large friendly KPIs",
+      "Fleet uses a table plus right side drawer for robot details",
+      "Facility uses full width map with minimal overlay panels",
+      "Incidents use a list plus timeline drawer",
+      "Developer is documentation like with clean code blocks"
+    ]
+  },
+  "screens": {
+    "overview": {
+      "purpose": "Executive summary of operations for a selected site and time range",
+      "widgets": [
+        "KPI tiles: active robots, uptime percent, missions completed, incidents open, average mission duration, interventions count",
+        "Fleet health distribution chart",
+        "Top recurring incident categories",
+        "Recent mission outcomes timeline",
+        "Map mini view: robots and incidents",
+        "Copilot prompt bar: Ask RobotOps"
+      ],
+      "interactions": [
+        "Click any KPI to drill down",
+        "Filter by robot tags, vendor, zone",
+        "Save view presets per role"
+      ]
+    },
+    "fleet": {
+      "purpose": "Operate and debug robots at scale",
+      "subpages": {
+        "fleet_list": {
+          "table_columns": [
+            "Robot",
+            "Vendor",
+            "Status",
+            "Battery",
+            "Site",
+            "Zone",
+            "Last Seen",
+            "Current Mission",
+            "Health Score"
+          ],
+          "filters": [
+            "status",
+            "vendor",
+            "tag",
+            "battery range",
+            "site",
+            "zone",
+            "capability"
+          ],
+          "bulk_actions": [
+            "assign tag",
+            "move to collection",
+            "export",
+            "request diagnostics"
+          ]
+        },
+        "robot_detail": {
+          "tabs": [
+            "Summary",
+            "Telemetry",
+            "Logs",
+            "Missions",
+            "Controls",
+            "Diagnostics",
+            "Audit"
+          ],
+          "summary": [
+            "live pose on map",
+            "battery and health",
+            "connectivity",
+            "current mission state",
+            "recent incidents"
+          ],
+          "telemetry": [
+            "time series charts for battery, cpu, temperature, network rssi, disk",
+            "event markers for warnings and errors",
+            "download raw data"
+          ],
+          "logs": [
+            "structured log stream with search",
+            "log levels",
+            "correlate logs with mission events"
+          ],
+          "controls": [
+            "safe actions gated by permissions",
+            "pause mission",
+            "resume mission",
+            "send to dock",
+            "set speed limit",
+            "request snapshot",
+            "emergency stop with confirmation"
+          ],
+          "diagnostics": [
+            "health check checklist",
+            "suggested root causes",
+            "recommended operator actions"
+          ],
+          "audit": [
+            "who did what to this robot and when"
+          ]
+        }
+      }
+    },
+    "missions": {
+      "purpose": "Create, schedule, track, and analyze missions",
+      "subpages": {
+        "mission_board": {
+          "views": [
+            "queue view",
+            "kanban by state",
+            "calendar by scheduled start",
+            "table view"
+          ],
+          "create_mission": {
+            "fields": [
+              "name",
+              "type",
+              "priority",
+              "site",
+              "floorplan",
+              "pickup location",
+              "dropoff location",
+              "constraints: avoid zones, max speed, required capabilities",
+              "robot selection: auto assign or specific robot",
+              "schedule: now or later"
+            ],
+            "validation": [
+              "must have site",
+              "must have valid waypoints",
+              "if zone requires operator ack then require operator ack workflow"
+            ]
+          }
+        },
+        "mission_detail": {
+          "sections": [
+            "status header and key timestamps",
+            "route and waypoints on map",
+            "timeline of mission events",
+            "KPIs summary and comparisons to baseline",
+            "exceptions and interventions",
+            "export report"
+          ]
+        }
+      }
+    },
+    "facility": {
+      "purpose": "Spatial operations view that ties robots, zones, missions, and assets to the facility",
+      "features": [
+        "floorplan selection and zoom pan",
+        "zone editor with polygons",
+        "traffic heatmap by time range",
+        "robot paths playback",
+        "rtls asset layer to show non robot assets",
+        "proximity events layer"
+      ],
+      "tools": [
+        "playback scrubber",
+        "layer toggles",
+        "measure distance tool",
+        "incident pin drop and note"
+      ]
+    },
+    "incidents": {
+      "purpose": "Operational exception management",
+      "list": {
+        "table_columns": [
+          "Severity",
+          "Category",
+          "Title",
+          "Robot",
+          "Mission",
+          "Site",
+          "Status",
+          "Created",
+          "Owner"
+        ],
+        "filters": [
+          "severity",
+          "category",
+          "status",
+          "site",
+          "robot",
+          "time range"
+        ]
+      },
+      "detail": {
+        "sections": [
+          "incident summary",
+          "timeline",
+          "related telemetry window",
+          "suggested actions",
+          "links to robot and mission",
+          "ack and resolve workflow"
+        ],
+        "automation_hooks": [
+          "post to Slack or Teams integration if configured",
+          "open a ticket in external system if configured"
+        ]
+      }
+    },
+    "teleoperation": {
+      "purpose": "Remote intervention with safety constraints",
+      "requirements": [
+        "show video stream placeholder with dummy url",
+        "show latency indicator and connection quality",
+        "controls must be permission gated",
+        "session recording metadata stored"
+      ],
+      "flows": [
+        "start session from incident",
+        "start session from robot detail",
+        "end session with reason and notes"
+      ]
+    },
+    "analytics": {
+      "purpose": "Performance, reliability, and utilization reporting",
+      "dashboards": [
+        "fleet uptime and reliability metrics",
+        "mission throughput by hour and zone",
+        "top failure modes by vendor and robot model",
+        "interventions per 100 missions",
+        "energy usage by robot",
+        "utilization percent and idle time analysis"
+      ],
+      "exports": [
+        "csv",
+        "pdf summary",
+        "api access"
+      ]
+    },
+    "integrations": {
+      "purpose": "Connect external systems and partners",
+      "types": [
+        "webhooks",
+        "wms erp wes connector stubs",
+        "slack teams notification stubs",
+        "rtls partner connector stub",
+        "sso configuration"
+      ],
+      "ui": [
+        "integration catalog cards",
+        "connect wizard",
+        "test connection",
+        "sync status and error logs"
+      ]
+    },
+    "developer": {
+      "purpose": "Engineer focused portal for APIs, keys, docs, and configuration as code",
+      "sections": [
+        "api keys and scopes",
+        "api explorer for REST endpoints",
+        "websocket stream tester",
+        "cli setup guide",
+        "dashboard configuration editor with schema validation",
+        "audit log viewer"
+      ],
+      "notes": [
+        "Provide sample curl commands for all endpoints",
+        "Include a sandbox mode with dummy robot data"
+      ]
+    },
+    "copilot": {
+      "purpose": "Conversational interface for ops insights and guided actions",
+      "capabilities": [
+        "natural language queries over fleet, missions, incidents, and telemetry",
+        "explain in plain language plus link to supporting charts",
+        "suggest next actions with confirmation",
+        "create filtered views",
+        "generate incident summaries",
+        "draft postmortem outline"
+      ],
+      "tooling": {
+        "allowed_tools": [
+          "query_robots",
+          "query_missions",
+          "query_incidents",
+          "query_telemetry",
+          "create_saved_view",
+          "draft_message"
+        ],
+        "safety": [
+          "never execute robot control actions without explicit user confirmation",
+          "redact secrets and api keys",
+          "respect RBAC"
+        ]
+      },
+      "example_prompts": [
+        "Why did mission throughput drop in Zone A yesterday",
+        "Show me the top recurring failure mode this week",
+        "Which robots have battery degradation patterns",
+        "Summarize open critical incidents and suggested actions",
+        "Compare vendor performance for navigation incidents"
+      ]
+    }
+  },
+  "api_spec_mock": {
+    "base_url": "http://localhost:4000/api",
+    "rest_endpoints": [
+      { "method": "GET", "path": "/tenants/me", "desc": "Get current tenant context" },
+      { "method": "GET", "path": "/sites", "desc": "List sites" },
+      { "method": "GET", "path": "/floorplans?site_id={id}", "desc": "List floorplans for a site" },
+      { "method": "GET", "path": "/robots?site_id={id}&status=online&tag=amr", "desc": "List robots with filters" },
+      { "method": "GET", "path": "/robots/{id}", "desc": "Robot detail" },
+      {
+        "method": "POST",
+        "path": "/robots/{id}/actions",
+        "desc": "Request robot action like dock or pause mission",
+        "body": { "action": "dock | pause | resume | speed_limit", "params": {} }
+      },
+      { "method": "GET", "path": "/missions?site_id={id}&state=running", "desc": "List missions" },
+      {
+        "method": "POST",
+        "path": "/missions",
+        "desc": "Create a mission",
+        "body": { "name": "string", "type": "string", "priority": "string", "site_id": "uuid", "assigned_robot_id": "uuid or null", "route": {} }
+      },
+      { "method": "GET", "path": "/missions/{id}", "desc": "Mission detail" },
+      { "method": "GET", "path": "/incidents?site_id={id}&status=open", "desc": "List incidents" },
+      { "method": "POST", "path": "/incidents/{id}/ack", "desc": "Acknowledge incident" },
+      { "method": "POST", "path": "/incidents/{id}/resolve", "desc": "Resolve incident with note", "body": { "note": "string" } },
+      { "method": "GET", "path": "/audit?resource_type=robot&resource_id={id}", "desc": "Audit log query" },
+      { "method": "GET", "path": "/telemetry/robot/{id}?metric=battery&from=...&to=...", "desc": "Telemetry timeseries for a robot metric" },
+      { "method": "GET", "path": "/rtls/assets?site_id={id}", "desc": "List assets tracked on floorplan" },
+      { "method": "GET", "path": "/copilot/thread/{id}", "desc": "Fetch copilot conversation thread" },
+      { "method": "POST", "path": "/copilot/thread", "desc": "Create copilot thread" },
+      { "method": "POST", "path": "/copilot/message", "desc": "Send user message and receive assistant response", "body": { "thread_id": "uuid", "content": "string" } }
+    ],
+    "realtime": {
+      "protocol": "WebSocket",
+      "channels": [
+        { "name": "robots.live", "payload": "robot pose, status, battery, last_seen" },
+        { "name": "incidents.live", "payload": "new and updated incidents" },
+        { "name": "missions.live", "payload": "mission state updates and key events" },
+        { "name": "telemetry.live", "payload": "selected metrics streaming" }
+      ]
+    }
+  },
+  "dummy_data_seed": {
+    "tenants": [
+      { "id": "t1", "name": "Demo Robotics Co", "plan": "enterprise", "created_at": "20260110T100000Z" }
+    ],
+    "sites": [
+      { "id": "s1", "tenant_id": "t1", "name": "Toronto Warehouse 01", "address": "Toronto, ON", "timezone": "America/Toronto", "floorplans": ["f1"], "created_at": "20260112T100000Z" }
+    ],
+    "floorplans": [
+      {
+        "id": "f1",
+        "site_id": "s1",
+        "name": "Main Floor",
+        "image_url": "/static/floorplans/warehouse_demo.png",
+        "scale_meters_per_pixel": 0.05,
+        "origin": { "x": 0, "y": 0 },
+        "rotation_degrees": 0,
+        "zones": ["z1", "z2", "z3"]
+      }
+    ],
+    "zones": [
+      {
+        "id": "z1",
+        "floorplan_id": "f1",
+        "name": "Charging Bay",
+        "type": "charging",
+        "polygon": [{ "x": 50, "y": 60 }, { "x": 80, "y": 60 }, { "x": 80, "y": 90 }, { "x": 50, "y": 90 }],
+        "rules": { "max_speed_mps": 0.5, "requires_operator_ack": false, "allowed_robot_tags": ["amr"] }
+      },
+      {
+        "id": "z2",
+        "floorplan_id": "f1",
+        "name": "High Traffic Aisle",
+        "type": "pedestrian",
+        "polygon": [{ "x": 120, "y": 40 }, { "x": 220, "y": 40 }, { "x": 220, "y": 70 }, { "x": 120, "y": 70 }],
+        "rules": { "max_speed_mps": 0.7, "requires_operator_ack": false, "allowed_robot_tags": ["amr", "agv"] }
+      },
+      {
+        "id": "z3",
+        "floorplan_id": "f1",
+        "name": "Restricted Storage",
+        "type": "restricted",
+        "polygon": [{ "x": 240, "y": 100 }, { "x": 310, "y": 100 }, { "x": 310, "y": 160 }, { "x": 240, "y": 160 }],
+        "rules": { "max_speed_mps": 0.4, "requires_operator_ack": true, "allowed_robot_tags": ["agv"] }
+      }
+    ],
+    "vendors": [
+      { "id": "v1", "name": "RoboVendor Alpha", "integration_type": "agent", "supported_protocols": ["custom_rest", "mqtt"] },
+      { "id": "v2", "name": "RoboVendor Beta", "integration_type": "edge_gateway", "supported_protocols": ["ros2_bridge", "open_rmf_adapter"] }
+    ],
+    "robots": [
+      {
+        "id": "r1",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "vendor_id": "v1",
+        "name": "AMR 17",
+        "model": "Alpha AMR",
+        "serial": "A17 0091",
+        "tags": ["amr", "picker"],
+        "status": "online",
+        "battery_percent": 76,
+        "last_seen_at": "20260226T234000Z",
+        "current_pose": { "floorplan_id": "f1", "x": 140, "y": 58, "heading_degrees": 95, "confidence": 0.92 },
+        "health": { "cpu_percent": 42, "memory_percent": 61, "temp_c": 57, "network_rssi": -60, "disk_percent": 48 },
+        "capabilities": ["navigate", "dock", "carry", "teleop", "deliver"],
+        "connectivity": { "connection": "wifi", "ip": "10.0.1.17", "firmware": "1.9.2", "agent_version": "0.14.0", "edge_id": null },
+        "created_at": "20260120T100000Z"
+      },
+      {
+        "id": "r2",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "vendor_id": "v2",
+        "name": "AGV 03",
+        "model": "Beta AGV",
+        "serial": "B03 1022",
+        "tags": ["agv", "heavy"],
+        "status": "degraded",
+        "battery_percent": 34,
+        "last_seen_at": "20260226T233930Z",
+        "current_pose": { "floorplan_id": "f1", "x": 255, "y": 120, "heading_degrees": 180, "confidence": 0.81 },
+        "health": { "cpu_percent": 68, "memory_percent": 73, "temp_c": 71, "network_rssi": -72, "disk_percent": 82 },
+        "capabilities": ["navigate", "dock", "lift", "carry", "teleop"],
+        "connectivity": { "connection": "lte", "ip": "100.64.0.3", "firmware": "3.2.1", "agent_version": "0.9.8", "edge_id": "e1" },
+        "created_at": "20260122T100000Z"
+      }
+    ],
+    "missions": [
+      {
+        "id": "m1",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "name": "Pick A12 to Pack Station 2",
+        "type": "pickup_dropoff",
+        "priority": "high",
+        "created_by_user_id": "u2",
+        "assigned_robot_id": "r1",
+        "state": "running",
+        "start_time": "20260226T233000Z",
+        "end_time": null,
+        "kpis": { "duration_s": 900, "distance_m": 220, "stops_count": 3, "interventions_count": 1, "energy_used_wh": 45 },
+        "route": {
+          "waypoints": [
+            { "name": "Pickup A12", "x": 120, "y": 60, "zone_id": "z2" },
+            { "name": "Pack Station 2", "x": 70, "y": 80, "zone_id": "z1" }
+          ],
+          "planned_path_polyline": [{ "x": 140, "y": 58 }, { "x": 120, "y": 60 }, { "x": 90, "y": 70 }, { "x": 70, "y": 80 }]
+        },
+        "failure": { "code": "", "message": "", "last_event_id": "" }
+      },
+      {
+        "id": "m2",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "name": "Heavy pallet transfer to Restricted Storage",
+        "type": "custom",
+        "priority": "critical",
+        "created_by_user_id": "u1",
+        "assigned_robot_id": "r2",
+        "state": "blocked",
+        "start_time": "20260226T231000Z",
+        "end_time": null,
+        "kpis": { "duration_s": 1800, "distance_m": 140, "stops_count": 5, "interventions_count": 2, "energy_used_wh": 90 },
+        "route": {
+          "waypoints": [
+            { "name": "Dock 4", "x": 200, "y": 55, "zone_id": "z2" },
+            { "name": "Restricted Storage", "x": 270, "y": 130, "zone_id": "z3" }
+          ],
+          "planned_path_polyline": [{ "x": 255, "y": 120 }, { "x": 240, "y": 110 }, { "x": 270, "y": 130 }]
+        },
+        "failure": { "code": "ZONE_REQUIRES_ACK", "message": "Entry into Restricted Storage requires operator acknowledgment", "last_event_id": "me8" }
+      }
+    ],
+    "incidents": [
+      {
+        "id": "i1",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "robot_id": "r2",
+        "mission_id": "m2",
+        "severity": "major",
+        "category": "safety",
+        "status": "open",
+        "title": "Restricted zone entry blocked",
+        "description": "Robot requested entry to a restricted zone that requires operator acknowledgment.",
+        "created_at": "20260226T231200Z",
+        "acknowledged_by": null,
+        "resolved_at": null,
+        "timeline": ["ie1", "ie2"]
+      }
+    ],
+    "rtls_assets": [
+      {
+        "id": "a1",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "type": "forklift",
+        "name": "Forklift 2",
+        "tags": ["manual_vehicle"],
+        "current_pose": { "floorplan_id": "f1", "x": 150, "y": 62, "heading_degrees": 270, "confidence": 0.75 },
+        "last_seen_at": "20260226T233950Z"
+      }
+    ],
+    "proximity_events": [
+      {
+        "id": "p1",
+        "tenant_id": "t1",
+        "site_id": "s1",
+        "timestamp": "20260226T233945Z",
+        "robot_id": "r1",
+        "asset_id": "a1",
+        "distance_m": 1.8,
+        "risk_level": "medium",
+        "zone_id": "z2"
+      }
+    ]
+  },
+  "implementation_plan": {
+    "phase_1_mvp": [
+      "Set up Next.js app with auth and site selector",
+      "Create dummy backend with seeded data and REST endpoints",
+      "Build Overview page with KPI tiles, mission timeline, incident list",
+      "Build Fleet list and Robot detail with live dummy updates via WebSocket",
+      "Build Missions list and Mission detail with route map overlay",
+      "Build Incidents list and detail with ack and resolve workflow",
+      "Add Facility map with robots and zones layers",
+      "Add Developer page with API keys table and sample curl snippets",
+      "Add Copilot page with mocked responses that call internal query endpoints"
+    ],
+    "phase_2_enhancements": [
+      "Telemetry time series charts with downsampling",
+      "Playback of robot paths over time",
+      "Saved views and role based default dashboards",
+      "Integration stubs with test connection flows",
+      "Audit log query and diff rendering",
+      "Configuration as code editor for dashboard widgets"
+    ],
+    "phase_3_scaling": [
+      "Introduce TimescaleDB for telemetry",
+      "Introduce message bus for ingestion",
+      "RBAC hardening and fine grained scopes",
+      "Multi site rollups and cross site analytics",
+      "Alert routing rules and escalation policies"
+    ]
+  },
+  "acceptance_criteria": {
+    "functional": [
+      "User can switch site and time range and all widgets update",
+      "Fleet list filters work and robot detail loads with tabs",
+      "Mission creation creates a new dummy mission and appears in list",
+      "Incidents can be acknowledged and resolved with timeline updates",
+      "Facility map shows robots, zones, and rtls assets with layer toggles",
+      "Copilot can answer at least 10 example prompts using internal data queries"
+    ],
+    "non_functional": [
+      "No vendor branding or copied UI elements",
+      "All data access is tenant scoped",
+      "Pages load under 2 seconds with seeded data",
+      "WebSocket reconnect logic works",
+      "All critical actions have confirmation dialogs and audit events"
+    ]
+  }
+}

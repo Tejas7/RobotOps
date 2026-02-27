@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { RobotOpsLogo } from "@/components/brand/robotops-logo";
 import { NAV_ITEMS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -11,8 +12,7 @@ export function Sidebar() {
   return (
     <aside className="hidden w-64 border-r border-border bg-surface/80 p-6 backdrop-blur md:block">
       <div>
-        <p className="text-xs tracking-[0.2em] text-muted">ROBOTOPS</p>
-        <h1 className="mt-2 text-xl font-semibold">Operations</h1>
+        <RobotOpsLogo showSubtitle />
       </div>
       <nav className="mt-8 space-y-1">
         {NAV_ITEMS.map((item) => {

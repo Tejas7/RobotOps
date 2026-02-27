@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
+import { RobotOpsLogo } from "@/components/brand/robotops-logo";
 
 export default function LoginPage() {
   const callbackUrl = "/overview";
@@ -32,7 +33,7 @@ export default function LoginPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
       <div className="w-full rounded-3xl border border-border bg-surface p-8 shadow-soft">
-        <p className="text-sm text-muted">RobotOps</p>
+        <RobotOpsLogo iconSize={40} className="mb-1" />
         <h1 className="mt-1 text-2xl font-semibold">Sign in</h1>
         <p className="mt-2 text-sm text-muted">Use seeded credentials to access the demo tenant.</p>
 

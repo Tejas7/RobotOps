@@ -56,10 +56,24 @@ interface Incident {
 }
 
 interface TelemetryPoint {
-  id: string;
-  metric: string;
-  value: number;
   timestamp: string;
+  value: number;
+  count: number;
+  min?: number;
+  max?: number;
+}
+
+interface TelemetrySeriesResponse {
+  robotId: string;
+  metric: string;
+  from: string;
+  to: string;
+  totalPoints: number;
+  downsampled: boolean;
+  aggregation: "avg" | "min" | "max" | "last";
+  bucketSeconds: number | null;
+  maxPoints: number;
+  points: TelemetryPoint[];
 }
 
 interface AuditEvent {
@@ -67,10 +81,34 @@ interface AuditEvent {
   timestamp: string;
   action: string;
   actorId: string;
+  diff: unknown;
+}
+
+interface AuditResponse {
+  items: AuditEvent[];
+  next_cursor: string | null;
 }
 
 const TAB_ITEMS = ["Summary", "Telemetry", "Logs", "Missions", "Controls", "Diagnostics", "Audit"] as const;
 type TabKey = (typeof TAB_ITEMS)[number];
+
+const TELEMETRY_METRICS = ["battery", "temp_c", "cpu_percent", "network_rssi", "disk_percent"] as const;
+const TELEMETRY_RANGES = ["1h", "6h", "24h", "7d"] as const;
+
+function rangeToFromIso(range: (typeof TELEMETRY_RANGES)[number]) {
+  const now = new Date();
+  const multiplier = {
+    "1h": 1,
+    "6h": 6,
+    "24h": 24,
+    "7d": 24 * 7
+  }[range];
+  const from = new Date(now.getTime() - multiplier * 60 * 60 * 1000);
+  return {
+    from: from.toISOString(),
+    to: now.toISOString()
+  };
+}
 
 export default function FleetPage() {
   const { siteId } = useGlobalFilters();
@@ -84,8 +122,11 @@ export default function FleetPage() {
   const [capabilityFilter, setCapabilityFilter] = useState("all");
   const [batteryMin, setBatteryMin] = useState("0");
 
+  const [telemetryMetric, setTelemetryMetric] = useState<(typeof TELEMETRY_METRICS)[number]>("battery");
+  const [telemetryRange, setTelemetryRange] = useState<(typeof TELEMETRY_RANGES)[number]>("24h");
+
   const robotsQuery = useAuthedQuery<Robot[]>(
-    ["fleet-robots", siteId],
+    ["fleet-robots", siteId, statusFilter, vendorFilter, tagFilter, capabilityFilter, batteryMin],
     `/robots?site_id=${siteId}&battery_min=${batteryMin}${statusFilter !== "all" ? `&status=${statusFilter}` : ""}${
       vendorFilter !== "all" ? `&vendor=${vendorFilter}` : ""
     }${tagFilter !== "all" ? `&tag=${tagFilter}` : ""}${capabilityFilter !== "all" ? `&capability=${capabilityFilter}` : ""}`
@@ -103,13 +144,20 @@ export default function FleetPage() {
 
   const missionsQuery = useAuthedQuery<Mission[]>(["missions", siteId], `/missions?site_id=${siteId}`);
   const incidentsQuery = useAuthedQuery<Incident[]>(["incidents", siteId], `/incidents?site_id=${siteId}`);
-  const telemetryQuery = useAuthedQuery<TelemetryPoint[]>(
-    ["telemetry", selectedRobotId],
-    selectedRobotId ? `/telemetry/robot/${selectedRobotId}?metric=battery` : "/telemetry/robot/r1?metric=battery"
+
+  const telemetryWindow = useMemo(() => rangeToFromIso(telemetryRange), [telemetryRange]);
+  const telemetryQuery = useAuthedQuery<TelemetrySeriesResponse>(
+    ["telemetry", selectedRobotId, telemetryMetric, telemetryWindow.from, telemetryWindow.to],
+    selectedRobotId
+      ? `/telemetry/robot/${selectedRobotId}?metric=${telemetryMetric}&from=${encodeURIComponent(telemetryWindow.from)}&to=${encodeURIComponent(
+          telemetryWindow.to
+        )}&max_points=240`
+      : undefined
   );
-  const auditQuery = useAuthedQuery<AuditEvent[]>(
+
+  const auditQuery = useAuthedQuery<AuditResponse>(
     ["audit", selectedRobotId],
-    selectedRobotId ? `/audit?resource_type=robot&resource_id=${selectedRobotId}` : "/audit?resource_type=robot"
+    selectedRobotId ? `/audit?resource_type=robot&resource_id=${selectedRobotId}&limit=100` : undefined
   );
 
   const actionMutation = useAuthedMutation<{ accepted: boolean; action: string }>();
@@ -140,6 +188,30 @@ export default function FleetPage() {
       }
     });
     setConfirmAction(null);
+  }
+
+  function downloadTelemetryCsv() {
+    if (!telemetryQuery.data) {
+      return;
+    }
+
+    const header = ["timestamp", "value", "count", "min", "max"];
+    const rows = telemetryQuery.data.points.map((point) => [
+      point.timestamp,
+      String(point.value),
+      String(point.count),
+      String(point.min ?? ""),
+      String(point.max ?? "")
+    ]);
+
+    const csv = [header.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `telemetry-${telemetryQuery.data.robotId}-${telemetryMetric}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   const robotMissions = (missionsQuery.data ?? []).filter((mission) => mission.assignedRobotId === selectedRobotId);
@@ -215,13 +287,16 @@ export default function FleetPage() {
               className="w-full border-none bg-transparent p-0 text-sm outline-none"
             />
           </label>
-          <Button variant="secondary" onClick={() => {
-            setStatusFilter("all");
-            setVendorFilter("all");
-            setTagFilter("all");
-            setCapabilityFilter("all");
-            setBatteryMin("0");
-          }}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setStatusFilter("all");
+              setVendorFilter("all");
+              setTagFilter("all");
+              setCapabilityFilter("all");
+              setBatteryMin("0");
+            }}
+          >
             Reset filters
           </Button>
         </div>
@@ -283,9 +358,15 @@ export default function FleetPage() {
               <CardTitle>Robot summary</CardTitle>
               <div className="mt-3 grid gap-2 text-sm">
                 <p>Battery: {robotDetailQuery.data.batteryPercent}%</p>
-                <p>CPU / Memory / Disk: {robotDetailQuery.data.cpuPercent}% / {robotDetailQuery.data.memoryPercent}% / {robotDetailQuery.data.diskPercent}%</p>
-                <p>Connectivity: {robotDetailQuery.data.connection} ({robotDetailQuery.data.ip})</p>
-                <p>Firmware: {robotDetailQuery.data.firmware} • Agent: {robotDetailQuery.data.agentVersion}</p>
+                <p>
+                  CPU / Memory / Disk: {robotDetailQuery.data.cpuPercent}% / {robotDetailQuery.data.memoryPercent}% / {robotDetailQuery.data.diskPercent}%
+                </p>
+                <p>
+                  Connectivity: {robotDetailQuery.data.connection} ({robotDetailQuery.data.ip})
+                </p>
+                <p>
+                  Firmware: {robotDetailQuery.data.firmware} • Agent: {robotDetailQuery.data.agentVersion}
+                </p>
                 <p>Current mission: {robotDetailQuery.data.missions?.[0]?.name ?? "None"}</p>
                 <p>Recent incidents: {robotIncidents.length}</p>
               </div>
@@ -294,11 +375,48 @@ export default function FleetPage() {
 
           {activeTab === "Telemetry" ? (
             <Card>
-              <CardTitle>Telemetry time series</CardTitle>
-              <CardMeta>Battery trend with event-capable chart view</CardMeta>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Telemetry time series</CardTitle>
+                  <CardMeta>
+                    {telemetryQuery.data?.downsampled
+                      ? `Downsampled (${telemetryQuery.data.aggregation}, bucket ${telemetryQuery.data.bucketSeconds}s)`
+                      : "Raw series"}
+                  </CardMeta>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    className="rounded-2xl border border-border bg-white px-3 py-2 text-xs"
+                    value={telemetryMetric}
+                    onChange={(event) => setTelemetryMetric(event.target.value as (typeof TELEMETRY_METRICS)[number])}
+                    aria-label="Telemetry metric"
+                  >
+                    {TELEMETRY_METRICS.map((metric) => (
+                      <option key={metric} value={metric}>
+                        {metric}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="rounded-2xl border border-border bg-white px-3 py-2 text-xs"
+                    value={telemetryRange}
+                    onChange={(event) => setTelemetryRange(event.target.value as (typeof TELEMETRY_RANGES)[number])}
+                    aria-label="Telemetry range"
+                  >
+                    {TELEMETRY_RANGES.map((range) => (
+                      <option key={range} value={range}>
+                        {range}
+                      </option>
+                    ))}
+                  </select>
+                  <Button variant="secondary" onClick={downloadTelemetryCsv}>
+                    Download CSV
+                  </Button>
+                </div>
+              </div>
               <div className="mt-4 h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={telemetryQuery.data ?? []}>
+                  <LineChart data={telemetryQuery.data?.points ?? []}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#d6dbe7" />
                     <XAxis dataKey="timestamp" tickFormatter={(value) => new Date(value).toLocaleTimeString()} />
                     <YAxis />
@@ -307,6 +425,9 @@ export default function FleetPage() {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              <p className="mt-2 text-xs text-muted">
+                {telemetryQuery.data?.points.length ?? 0} rendered points from {telemetryQuery.data?.totalPoints ?? 0} total points.
+              </p>
             </Card>
           ) : null}
 
@@ -317,7 +438,7 @@ export default function FleetPage() {
               <div className="mt-3 space-y-2 rounded-2xl border border-border bg-slate-950 p-3 font-mono text-xs text-slate-200">
                 <p>[INFO] navigation loop running latency=42ms robot={selectedRobotId}</p>
                 <p>[WARN] zone_ack_required zone=z3 mission=m2</p>
-                <p>[INFO] battery trend sampled interval=60s</p>
+                <p>[INFO] telemetry stream metric={telemetryMetric} range={telemetryRange}</p>
               </div>
             </Card>
           ) : null}
@@ -373,7 +494,7 @@ export default function FleetPage() {
             <Card>
               <CardTitle>Audit trail</CardTitle>
               <ul className="mt-3 space-y-2 text-sm">
-                {(auditQuery.data ?? []).slice(0, 15).map((entry) => (
+                {(auditQuery.data?.items ?? []).slice(0, 25).map((entry) => (
                   <li key={entry.id} className="rounded-2xl border border-border bg-surface p-3">
                     <p className="font-medium">{entry.action}</p>
                     <p className="text-xs text-muted">

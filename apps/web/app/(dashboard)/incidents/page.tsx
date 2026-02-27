@@ -36,6 +36,14 @@ interface Incident {
   timeline: IncidentEvent[];
 }
 
+interface Integration {
+  id: string;
+  name: string;
+  type: string;
+  status: "active" | "disabled" | "error";
+  lastSyncAt: string | null;
+}
+
 export default function IncidentsPage() {
   const { siteId } = useGlobalFilters();
   const { can, canAny } = useRbac();
@@ -52,6 +60,7 @@ export default function IncidentsPage() {
       category !== "all" ? `&category=${category}` : ""
     }${status !== "all" ? `&status=${status}` : ""}`
   );
+  const integrationsQuery = useAuthedQuery<Integration[]>(["integrations"], "/integrations");
 
   const ackMutation = useAuthedMutation<Incident>();
   const resolveMutation = useAuthedMutation<Incident>();
@@ -222,10 +231,20 @@ export default function IncidentsPage() {
 
             <Card>
               <CardTitle>Automation hooks</CardTitle>
-              <CardMeta>Integration stubs</CardMeta>
+              <CardMeta>Live integration connector statuses for incident workflows</CardMeta>
               <ul className="mt-2 space-y-2 text-sm text-muted">
-                <li className="rounded-2xl border border-border bg-surface p-2">Slack/Teams: not configured in MVP seed.</li>
-                <li className="rounded-2xl border border-border bg-surface p-2">External ticketing: connector stub only.</li>
+                {(integrationsQuery.data ?? []).slice(0, 6).map((integration) => (
+                  <li key={integration.id} className="rounded-2xl border border-border bg-surface p-2">
+                    <p className="font-medium text-text">{integration.name}</p>
+                    <p className="text-xs">
+                      {integration.type} • {integration.status} • last sync:{" "}
+                      {integration.lastSyncAt ? formatDate(integration.lastSyncAt) : "never"}
+                    </p>
+                  </li>
+                ))}
+                {!integrationsQuery.data?.length ? (
+                  <li className="rounded-2xl border border-border bg-surface p-2">No integrations configured.</li>
+                ) : null}
               </ul>
             </Card>
           </div>
