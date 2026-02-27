@@ -9,6 +9,7 @@ declare module "next-auth" {
       tenantId: string;
       role: Role;
       permissions: string[];
+      scopeVersion?: number;
     };
   }
 }
@@ -18,6 +19,7 @@ declare module "next-auth/jwt" {
     tenantId?: string;
     role?: Role;
     permissions?: string[];
+    scopeVersion?: number;
     accessToken?: string;
   }
 }

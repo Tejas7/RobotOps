@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { permissionsForRole, type Role } from "@robotops/shared";
+import { normalizePermissions, permissionsForRole, type Role } from "@robotops/shared";
 
 interface SeedUser {
   id: string;
@@ -68,7 +68,7 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        const permissions = permissionsForRole(matched.role);
+        const permissions = normalizePermissions(permissionsForRole(matched.role));
         const accessToken = jwt.sign(
           {
             sub: matched.id,
@@ -76,7 +76,8 @@ export const authOptions: NextAuthOptions = {
             name: matched.name,
             tenantId: matched.tenantId,
             role: matched.role,
-            permissions
+            permissions,
+            scope_version: 2
           },
           getJwtSecret(),
           { expiresIn: "30m" }
@@ -89,6 +90,7 @@ export const authOptions: NextAuthOptions = {
           tenantId: matched.tenantId,
           role: matched.role,
           permissions,
+          scopeVersion: 2,
           accessToken
         } as any;
       }
@@ -102,7 +104,8 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.tenantId = (user as any).tenantId;
         token.role = (user as any).role;
-        token.permissions = (user as any).permissions;
+        token.permissions = normalizePermissions((user as any).permissions ?? []);
+        token.scopeVersion = (user as any).scopeVersion ?? 2;
         token.accessToken = (user as any).accessToken;
       }
       return token;
@@ -111,7 +114,8 @@ export const authOptions: NextAuthOptions = {
       session.user.id = token.sub ?? "";
       session.user.tenantId = (token.tenantId as string) ?? "";
       session.user.role = (token.role as Role) ?? "Viewer";
-      session.user.permissions = (token.permissions as string[]) ?? [];
+      session.user.permissions = normalizePermissions((token.permissions as string[]) ?? []);
+      session.user.scopeVersion = (token.scopeVersion as number) ?? 2;
       session.accessToken = (token.accessToken as string) ?? "";
       return session;
     }

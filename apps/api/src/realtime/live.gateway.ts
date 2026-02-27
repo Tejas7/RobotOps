@@ -54,7 +54,7 @@ export class LiveGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.emit("live.connected", {
         ok: true,
-        channels: ["robots.live", "incidents.live", "missions.live", "telemetry.live"],
+        channels: ["robots.live", "incidents.live", "missions.live", "telemetry.live", "alerts.live"],
         reconnect_hint: "Send auth token in handshake.auth.token on reconnect"
       });
     } catch {
@@ -128,6 +128,11 @@ export class LiveGateway implements OnGatewayConnection, OnGatewayDisconnect {
         channel: "telemetry.live",
         timestamp,
         data: telemetry
+      });
+      this.server.to(`tenant:${tenant.id}`).emit("alerts.live", {
+        channel: "alerts.live",
+        timestamp,
+        data: []
       });
       this.server.to(`tenant:${tenant.id}`).emit("live.heartbeat", {
         timestamp,

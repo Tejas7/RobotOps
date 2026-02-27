@@ -44,9 +44,29 @@ interface Integration {
   lastSyncAt: string | null;
 }
 
+interface AlertEvent {
+  id: string;
+  state: string;
+  severity: string;
+  title: string;
+  triggeredAt: string;
+  deliveries: Array<{
+    id: string;
+    state: string;
+    channel: string;
+    target: string;
+    scheduledFor: string;
+    sentAt: string | null;
+  }>;
+}
+
+interface AlertEventResponse {
+  items: AlertEvent[];
+}
+
 export default function IncidentsPage() {
   const { siteId } = useGlobalFilters();
-  const { can, canAny } = useRbac();
+  const { canAny } = useRbac();
   const [severity, setSeverity] = useState("all");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
@@ -61,17 +81,23 @@ export default function IncidentsPage() {
     }${status !== "all" ? `&status=${status}` : ""}`
   );
   const integrationsQuery = useAuthedQuery<Integration[]>(["integrations"], "/integrations");
+  const alertEventsQuery = useAuthedQuery<AlertEventResponse>(
+    ["incident-alert-events", selectedId],
+    selectedId ? `/alerts/events?incident_id=${selectedId}&limit=20` : undefined,
+    { enabled: Boolean(selectedId) }
+  );
 
   const ackMutation = useAuthedMutation<Incident>();
   const resolveMutation = useAuthedMutation<Incident>();
+  const alertAckMutation = useAuthedMutation();
 
   const selectedIncident = useMemo(
     () => incidentsQuery.data?.find((incident) => incident.id === selectedId) ?? null,
     [incidentsQuery.data, selectedId]
   );
 
-  const canAck = canAny(["incidents.ack", "incidents.write"]);
-  const canResolve = can("incidents.write");
+  const canAck = canAny(["incidents.ack", "incidents.resolve", "incidents.write"]);
+  const canResolve = canAny(["incidents.resolve", "incidents.write"]);
 
   return (
     <div className="space-y-6">
@@ -80,14 +106,32 @@ export default function IncidentsPage() {
       <Card>
         <CardTitle>Filters</CardTitle>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
-          <select value={severity} onChange={(event) => setSeverity(event.target.value)} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm">
+          <label htmlFor="incidents-severity-filter" className="sr-only">
+            Filter by severity
+          </label>
+          <select
+            id="incidents-severity-filter"
+            value={severity}
+            onChange={(event) => setSeverity(event.target.value)}
+            className="rounded-2xl border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Filter by severity"
+          >
             <option value="all">Severity: all</option>
             <option value="info">Info</option>
             <option value="warning">Warning</option>
             <option value="major">Major</option>
             <option value="critical">Critical</option>
           </select>
-          <select value={category} onChange={(event) => setCategory(event.target.value)} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm">
+          <label htmlFor="incidents-category-filter" className="sr-only">
+            Filter by category
+          </label>
+          <select
+            id="incidents-category-filter"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            className="rounded-2xl border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Filter by category"
+          >
             <option value="all">Category: all</option>
             <option value="navigation">Navigation</option>
             <option value="traffic">Traffic</option>
@@ -97,7 +141,16 @@ export default function IncidentsPage() {
             <option value="safety">Safety</option>
             <option value="integration">Integration</option>
           </select>
-          <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-2xl border border-border bg-white px-3 py-2 text-sm">
+          <label htmlFor="incidents-status-filter" className="sr-only">
+            Filter by status
+          </label>
+          <select
+            id="incidents-status-filter"
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className="rounded-2xl border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Filter by status"
+          >
             <option value="all">Status: all</option>
             <option value="open">Open</option>
             <option value="acknowledged">Acknowledged</option>
@@ -244,6 +297,49 @@ export default function IncidentsPage() {
                 ))}
                 {!integrationsQuery.data?.length ? (
                   <li className="rounded-2xl border border-border bg-surface p-2">No integrations configured.</li>
+                ) : null}
+              </ul>
+            </Card>
+
+            <Card>
+              <CardTitle>Alert escalation timeline</CardTitle>
+              <CardMeta>Routing and escalation status for this incident</CardMeta>
+              <ul className="mt-2 space-y-2 text-sm text-muted">
+                {(alertEventsQuery.data?.items ?? []).map((event) => (
+                  <li key={event.id} className="rounded-2xl border border-border bg-surface p-3">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-text">{event.title}</p>
+                      <StatusChip status={event.state} />
+                    </div>
+                    <p className="text-xs">
+                      {event.severity} • triggered {formatDate(event.triggeredAt)}
+                    </p>
+                    <div className="mt-2 space-y-1 text-xs">
+                      {event.deliveries.map((delivery) => (
+                        <p key={delivery.id}>
+                          {delivery.channel} → {delivery.target} • {delivery.state} • scheduled {formatDate(delivery.scheduledFor)}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="mt-2">
+                      <Button
+                        variant="secondary"
+                        className="px-3 py-1.5 text-xs"
+                        onClick={async () => {
+                          await alertAckMutation.mutateAsync({
+                            path: `/alerts/events/${event.id}/ack`,
+                            method: "POST"
+                          });
+                          await alertEventsQuery.refetch();
+                        }}
+                      >
+                        Acknowledge alert
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+                {!alertEventsQuery.data?.items.length ? (
+                  <li className="rounded-2xl border border-border bg-surface p-3">No alert events for this incident yet.</li>
                 ) : null}
               </ul>
             </Card>

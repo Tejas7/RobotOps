@@ -1,10 +1,11 @@
-import type { Permission, Role } from "@robotops/shared";
+import { normalizePermissions, permissionImplies, type Permission, type Role } from "@robotops/shared";
 
 export function hasPermission(role: Role | undefined, permissions: string[] | undefined, required: Permission): boolean {
   if (role === "Owner") {
     return true;
   }
-  return Boolean(permissions?.includes(required));
+  const normalized = normalizePermissions(permissions ?? []);
+  return normalized.some((permission) => permissionImplies(permission, required));
 }
 
 export function hasAnyPermission(
@@ -15,5 +16,8 @@ export function hasAnyPermission(
   if (role === "Owner") {
     return true;
   }
-  return required.some((permission) => permissions?.includes(permission));
+  const normalized = normalizePermissions(permissions ?? []);
+  return required.some((requiredPermission) =>
+    normalized.some((permission) => permissionImplies(permission, requiredPermission))
+  );
 }

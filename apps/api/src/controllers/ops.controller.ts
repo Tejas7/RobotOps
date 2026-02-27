@@ -8,21 +8,23 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
-  ForbiddenException
+  UseGuards
 } from "@nestjs/common";
-import type { Permission } from "@robotops/shared";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
-import { RequirePermissions } from "../common/decorators/permissions.decorator";
+import { RequireAnyPermissions, RequirePermissions } from "../common/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../common/guards/permissions.guard";
 import type { RequestUser } from "../auth/types";
 import { OpsService } from "../services/ops.service";
+import { Phase3Service } from "../services/phase3.service";
 
 @Controller()
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class OpsController {
-  constructor(@Inject(OpsService) private readonly opsService: OpsService) {}
+  constructor(
+    @Inject(OpsService) private readonly opsService: OpsService,
+    @Inject(Phase3Service) private readonly phase3Service: Phase3Service
+  ) {}
 
   @Get("tenants/me")
   getTenant(@CurrentUser() user: RequestUser) {
@@ -71,7 +73,13 @@ export class OpsController {
   }
 
   @Post("robots/:id/actions")
-  @RequirePermissions("robots.control")
+  @RequireAnyPermissions(
+    "robots.control",
+    "robots.control.dock",
+    "robots.control.pause",
+    "robots.control.resume",
+    "robots.control.speed_limit"
+  )
   requestRobotAction(@CurrentUser() user: RequestUser, @Param("id") id: string, @Body() body: unknown) {
     return this.opsService.requestRobotAction(user.tenantId, id, user, body);
   }
@@ -83,7 +91,7 @@ export class OpsController {
   }
 
   @Post("missions")
-  @RequirePermissions("missions.write")
+  @RequireAnyPermissions("missions.create", "missions.write")
   createMission(@CurrentUser() user: RequestUser, @Body() body: unknown) {
     return this.opsService.createMission(user.tenantId, user, body);
   }
@@ -114,13 +122,13 @@ export class OpsController {
   }
 
   @Post("incidents/:id/ack")
+  @RequireAnyPermissions("incidents.ack", "incidents.resolve", "incidents.write")
   acknowledgeIncident(@CurrentUser() user: RequestUser, @Param("id") id: string) {
-    this.assertAnyPermission(user, ["incidents.ack", "incidents.write"]);
     return this.opsService.acknowledgeIncident(user.tenantId, id, user);
   }
 
   @Post("incidents/:id/resolve")
-  @RequirePermissions("incidents.write")
+  @RequireAnyPermissions("incidents.resolve", "incidents.write")
   resolveIncident(@CurrentUser() user: RequestUser, @Param("id") id: string, @Body() body: unknown) {
     return this.opsService.resolveIncident(user.tenantId, id, user, body);
   }
@@ -151,7 +159,7 @@ export class OpsController {
   }
 
   @Get("telemetry/robot/:id")
-  @RequirePermissions("robots.read")
+  @RequireAnyPermissions("telemetry.read", "robots.read")
   telemetryByRobot(
     @CurrentUser() user: RequestUser,
     @Param("id") id: string,
@@ -246,7 +254,7 @@ export class OpsController {
   }
 
   @Post("integrations/:id/test")
-  @RequirePermissions("integrations.manage")
+  @RequireAnyPermissions("integrations.test", "integrations.manage")
   testIntegration(@CurrentUser() user: RequestUser, @Param("id") id: string) {
     return this.opsService.testIntegration(user.tenantId, user, id);
   }
@@ -288,35 +296,178 @@ export class OpsController {
   }
 
   @Get("analytics/dashboard")
-  @RequirePermissions("analytics.read")
+  @RequireAnyPermissions("analytics.read.site", "analytics.read.cross_site", "analytics.read")
   getAnalyticsDashboard(
     @CurrentUser() user: RequestUser,
     @Query("site_id") siteId?: string,
+    @Query("site_ids") siteIdsRaw?: string,
     @Query("from") from?: string,
-    @Query("to") to?: string
+    @Query("to") to?: string,
+    @Query("granularity") granularity?: "hour" | "day",
+    @Query("use_rollups") useRollupsRaw?: string
   ) {
-    return this.opsService.getAnalyticsDashboard(user.tenantId, siteId, from, to);
+    return this.phase3Service.getAnalyticsDashboard(user.tenantId, {
+      site_id: siteId,
+      site_ids: siteIdsRaw ? siteIdsRaw.split(",").filter(Boolean) : [],
+      from,
+      to,
+      granularity,
+      use_rollups: useRollupsRaw ? useRollupsRaw === "true" : undefined
+    });
+  }
+
+  @Get("analytics/cross-site")
+  @RequireAnyPermissions("analytics.read.cross_site", "analytics.read")
+  getCrossSiteAnalytics(
+    @CurrentUser() user: RequestUser,
+    @Query("site_id") siteId?: string,
+    @Query("site_ids") siteIdsRaw?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("granularity") granularity?: "hour" | "day",
+    @Query("use_rollups") useRollupsRaw?: string
+  ) {
+    return this.phase3Service.getCrossSiteAnalytics(user.tenantId, {
+      site_id: siteId,
+      site_ids: siteIdsRaw ? siteIdsRaw.split(",").filter(Boolean) : [],
+      from,
+      to,
+      granularity,
+      use_rollups: useRollupsRaw ? useRollupsRaw === "true" : undefined
+    });
   }
 
   @Get("analytics/export")
-  @RequirePermissions("analytics.read")
+  @RequirePermissions("analytics.export")
   exportAnalytics(
     @CurrentUser() user: RequestUser,
     @Query("format") format?: string,
     @Query("site_id") siteId?: string,
+    @Query("site_ids") siteIdsRaw?: string,
+    @Query("dataset") dataset?: string,
     @Query("from") from?: string,
-    @Query("to") to?: string
+    @Query("to") to?: string,
+    @Query("granularity") granularity?: "hour" | "day",
+    @Query("use_rollups") useRollupsRaw?: string
   ) {
-    return this.opsService.exportAnalytics(user.tenantId, format, siteId, from, to);
+    return this.phase3Service.exportAnalytics(user.tenantId, format, dataset, {
+      site_id: siteId,
+      site_ids: siteIdsRaw ? siteIdsRaw.split(",").filter(Boolean) : [],
+      from,
+      to,
+      granularity,
+      use_rollups: useRollupsRaw ? useRollupsRaw === "true" : undefined
+    });
   }
 
-  private assertAnyPermission(user: RequestUser, permissions: Permission[]) {
-    if (user.role === "Owner") {
-      return;
-    }
-    const allowed = permissions.some((permission) => user.permissions.includes(permission));
-    if (!allowed) {
-      throw new ForbiddenException("Insufficient permissions");
-    }
+  @Post("ingest/telemetry")
+  @RequirePermissions("telemetry.ingest")
+  ingestTelemetry(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.ingestTelemetry(user.tenantId, user, body);
+  }
+
+  @Get("alerts/rules")
+  @RequirePermissions("alerts.read")
+  listAlertRules(@CurrentUser() user: RequestUser) {
+    return this.phase3Service.listAlertRules(user.tenantId);
+  }
+
+  @Post("alerts/rules")
+  @RequirePermissions("alerts.manage")
+  createAlertRule(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.createAlertRule(user.tenantId, user, body);
+  }
+
+  @Patch("alerts/rules/:id")
+  @RequirePermissions("alerts.manage")
+  patchAlertRule(@CurrentUser() user: RequestUser, @Param("id") id: string, @Body() body: unknown) {
+    return this.phase3Service.patchAlertRule(user.tenantId, user, id, body);
+  }
+
+  @Delete("alerts/rules/:id")
+  @RequirePermissions("alerts.manage")
+  deleteAlertRule(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.phase3Service.deleteAlertRule(user.tenantId, user, id);
+  }
+
+  @Get("alerts/policies")
+  @RequirePermissions("alerts.read")
+  listAlertPolicies(@CurrentUser() user: RequestUser) {
+    return this.phase3Service.listAlertPolicies(user.tenantId);
+  }
+
+  @Post("alerts/policies")
+  @RequirePermissions("alerts.manage")
+  createAlertPolicy(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.createAlertPolicy(user.tenantId, user, body);
+  }
+
+  @Patch("alerts/policies/:id")
+  @RequirePermissions("alerts.manage")
+  patchAlertPolicy(@CurrentUser() user: RequestUser, @Param("id") id: string, @Body() body: unknown) {
+    return this.phase3Service.patchAlertPolicy(user.tenantId, user, id, body);
+  }
+
+  @Delete("alerts/policies/:id")
+  @RequirePermissions("alerts.manage")
+  deleteAlertPolicy(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.phase3Service.deleteAlertPolicy(user.tenantId, user, id);
+  }
+
+  @Get("alerts/events")
+  @RequirePermissions("alerts.read")
+  listAlertEvents(
+    @CurrentUser() user: RequestUser,
+    @Query("state") state?: string,
+    @Query("severity") severity?: string,
+    @Query("site_id") siteId?: string,
+    @Query("incident_id") incidentId?: string,
+    @Query("cursor") cursor?: string,
+    @Query("limit") limit?: string
+  ) {
+    return this.phase3Service.listAlertEvents(user.tenantId, {
+      state,
+      severity,
+      site_id: siteId,
+      incident_id: incidentId,
+      cursor,
+      limit: limit ? Number(limit) : undefined
+    });
+  }
+
+  @Post("alerts/events/:id/ack")
+  @RequirePermissions("alerts.manage")
+  acknowledgeAlertEvent(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.phase3Service.acknowledgeAlertEvent(user.tenantId, user, id);
+  }
+
+  @Post("alerts/test-route")
+  @RequirePermissions("alerts.manage")
+  testAlertRoute(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.testAlertRoute(user.tenantId, user, body);
+  }
+
+  @Get("rbac/scopes")
+  @RequirePermissions("rbac.read")
+  getScopeCatalog() {
+    return this.phase3Service.getScopeCatalog();
+  }
+
+  @Get("rbac/roles")
+  @RequirePermissions("rbac.read")
+  getRoleScopeMatrix(@CurrentUser() user: RequestUser) {
+    return this.phase3Service.getRoleScopeMatrix(user.tenantId);
+  }
+
+  @Patch("rbac/roles/:role")
+  @RequirePermissions("rbac.write")
+  patchRoleScopeOverride(@CurrentUser() user: RequestUser, @Param("role") role: string, @Body() body: unknown) {
+    return this.phase3Service.patchRoleScopeOverride(user.tenantId, user, role, body);
+  }
+
+  @Get("system/pipeline-status")
+  @RequirePermissions("config.read")
+  getPipelineStatus(@CurrentUser() user: RequestUser) {
+    return this.phase3Service.getPipelineStatus(user.tenantId);
   }
 }

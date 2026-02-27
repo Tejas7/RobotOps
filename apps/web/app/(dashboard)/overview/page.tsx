@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import type { Route } from "next";
+import { BookmarkPlus, ShieldCheck } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
 import { useLiveSocket } from "@/hooks/use-live-socket";
 import { useGlobalFilters } from "@/store/use-global-filters";
@@ -46,12 +50,50 @@ interface Floorplan {
   zones: Array<{ id: string; name: string; type: string; polygon: Array<{ x: number; y: number }> }>;
 }
 
+interface Site {
+  id: string;
+  name: string;
+}
+
+interface SavedView {
+  id: string;
+  page: string;
+  name: string;
+  filters: Record<string, unknown>;
+  isShared: boolean;
+}
+
+interface RoleDefault {
+  id: string;
+  role: string;
+  page: string;
+  savedViewId: string;
+}
+
+interface SavedViewsResponse {
+  items: SavedView[];
+  defaults: RoleDefault[];
+}
+
+const TIME_RANGES = ["1h", "6h", "24h", "7d"];
+
 export default function OverviewPage() {
-  const { siteId, timeRange } = useGlobalFilters();
+  const { data: session } = useSession();
+  const { siteId, timeRange, setSiteId, setTimeRange } = useGlobalFilters();
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const effectiveSiteId = searchParams.get("site_id") ?? siteId;
   const effectiveTimeRange = searchParams.get("time_range") ?? timeRange;
   const { socket } = useLiveSocket();
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
+  const [defaultApplied, setDefaultApplied] = useState(false);
+
+  const sitesQuery = useAuthedQuery<Site[]>(["sites"], "/sites");
+  const savedViewsQuery = useAuthedQuery<SavedViewsResponse>(["saved-views", "overview"], "/saved-views?page=overview");
+  const createSavedViewMutation = useAuthedMutation<SavedView>();
+  const setDefaultSavedViewMutation = useAuthedMutation<RoleDefault>();
+
   const robotsQuery = useAuthedQuery<Robot[]>(["robots", effectiveSiteId], `/robots?site_id=${effectiveSiteId}`);
   const missionsQuery = useAuthedQuery<Mission[]>(["missions", effectiveSiteId], `/missions?site_id=${effectiveSiteId}`);
   const incidentsQuery = useAuthedQuery<Incident[]>(["incidents", effectiveSiteId], `/incidents?site_id=${effectiveSiteId}`);
@@ -62,6 +104,106 @@ export default function OverviewPage() {
   const robots = liveRobots ?? robotsQuery.data ?? [];
   const missions = missionsQuery.data ?? [];
   const incidents = liveIncidents ?? incidentsQuery.data ?? [];
+
+  function syncFiltersToUrl(nextSiteId: string, nextTimeRange: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("site_id", nextSiteId);
+    params.set("time_range", nextTimeRange);
+    router.replace(`${pathname}?${params.toString()}` as Route, { scroll: false });
+  }
+
+  async function applySavedView(viewId: string) {
+    setSelectedSavedViewId(viewId);
+    const view = (savedViewsQuery.data?.items ?? []).find((entry) => entry.id === viewId);
+    if (!view) {
+      return;
+    }
+
+    const nextSite = typeof view.filters.site_id === "string" ? view.filters.site_id : siteId;
+    const nextRange = typeof view.filters.time_range === "string" ? view.filters.time_range : timeRange;
+    setSiteId(nextSite);
+    setTimeRange(nextRange);
+    syncFiltersToUrl(nextSite, nextRange);
+  }
+
+  async function saveCurrentView() {
+    const payload = {
+      page: "overview",
+      name: `overview ${new Date().toLocaleDateString()}`,
+      filters: {
+        site_id: effectiveSiteId,
+        time_range: effectiveTimeRange
+      },
+      layout: {},
+      is_shared: true
+    };
+
+    const created = await createSavedViewMutation.mutateAsync({ path: "/saved-views", method: "POST", body: payload });
+    setSelectedSavedViewId(created.id);
+    await savedViewsQuery.refetch();
+  }
+
+  async function setRoleDefault() {
+    if (!selectedSavedViewId || !session?.user?.role) {
+      return;
+    }
+
+    await setDefaultSavedViewMutation.mutateAsync({
+      path: `/saved-views/${selectedSavedViewId}/set-default`,
+      method: "POST",
+      body: {
+        role: session.user.role,
+        page: "overview"
+      }
+    });
+    await savedViewsQuery.refetch();
+  }
+
+  useEffect(() => {
+    const urlSiteId = searchParams.get("site_id");
+    const urlTimeRange = searchParams.get("time_range");
+
+    if (urlSiteId && urlSiteId !== siteId) {
+      setSiteId(urlSiteId);
+    }
+    if (urlTimeRange && urlTimeRange !== timeRange) {
+      setTimeRange(urlTimeRange);
+    }
+  }, [searchParams, setSiteId, setTimeRange, siteId, timeRange]);
+
+  useEffect(() => {
+    if (defaultApplied) {
+      return;
+    }
+
+    if (searchParams.get("site_id") || searchParams.get("time_range")) {
+      setDefaultApplied(true);
+      return;
+    }
+
+    const defaults = savedViewsQuery.data?.defaults ?? [];
+    const items = savedViewsQuery.data?.items ?? [];
+    const roleDefault = defaults.find((entry) => entry.role === session?.user?.role && entry.page === "overview");
+
+    if (!roleDefault) {
+      setDefaultApplied(true);
+      return;
+    }
+
+    const view = items.find((entry) => entry.id === roleDefault.savedViewId);
+    if (!view) {
+      setDefaultApplied(true);
+      return;
+    }
+
+    const nextSite = typeof view.filters.site_id === "string" ? view.filters.site_id : siteId;
+    const nextRange = typeof view.filters.time_range === "string" ? view.filters.time_range : timeRange;
+    setSiteId(nextSite);
+    setTimeRange(nextRange);
+    setSelectedSavedViewId(view.id);
+    syncFiltersToUrl(nextSite, nextRange);
+    setDefaultApplied(true);
+  }, [defaultApplied, savedViewsQuery.data, searchParams, session?.user?.role, setSiteId, setTimeRange, siteId, timeRange]);
 
   useEffect(() => {
     if (!socket) {
@@ -120,6 +262,7 @@ export default function OverviewPage() {
 
   const floorplan = floorplansQuery.data?.[0];
   const floorplanImageUrl = floorplan?.imageUrl;
+  const canSetDefault = session?.user?.role === "Owner" || session?.user?.permissions?.includes("config.write");
 
   return (
     <div className="space-y-6">
@@ -127,6 +270,85 @@ export default function OverviewPage() {
         title="Overview"
         subtitle={`Executive summary for site ${effectiveSiteId} in the last ${effectiveTimeRange}. Click KPI cards to drill into relevant pages.`}
       />
+
+      <section className="rounded-3xl border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <select
+            className="min-w-[220px] rounded-full border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Select site"
+            value={effectiveSiteId}
+            onChange={(event) => {
+              const nextSiteId = event.target.value;
+              setSiteId(nextSiteId);
+              syncFiltersToUrl(nextSiteId, effectiveTimeRange);
+            }}
+          >
+            <option value="all">All sites</option>
+            {(sitesQuery.data ?? [{ id: "s1", name: "Toronto Warehouse 01" }]).map((site) => (
+              <option key={site.id} value={site.id}>
+                {site.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="w-[96px] shrink-0 rounded-full border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Select time range"
+            value={effectiveTimeRange}
+            onChange={(event) => {
+              const nextTimeRange = event.target.value;
+              setTimeRange(nextTimeRange);
+              syncFiltersToUrl(effectiveSiteId, nextTimeRange);
+            }}
+          >
+            {TIME_RANGES.map((range) => (
+              <option key={range} value={range}>
+                {range}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="min-w-[200px] rounded-full border border-border bg-white px-3 py-2 text-sm"
+            aria-label="Saved views"
+            value={selectedSavedViewId}
+            onChange={(event) => {
+              void applySavedView(event.target.value);
+            }}
+          >
+            <option value="">Saved views</option>
+            {(savedViewsQuery.data?.items ?? []).map((view) => (
+              <option key={view.id} value={view.id}>
+                {view.name}
+                {view.isShared ? " (shared)" : ""}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-white px-3 py-2 text-sm text-text"
+            onClick={() => {
+              void saveCurrentView();
+            }}
+          >
+            <BookmarkPlus size={14} /> Save view
+          </button>
+
+          {canSetDefault ? (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-white px-3 py-2 text-sm text-text disabled:opacity-50"
+              disabled={!selectedSavedViewId}
+              onClick={() => {
+                void setRoleDefault();
+              }}
+            >
+              <ShieldCheck size={14} /> Set role default
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Link href="/fleet" className="block">

@@ -9,6 +9,8 @@ import {
   integrationCreateSchema,
   integrationPatchSchema,
   missionCreateSchema,
+  normalizePermissions,
+  permissionImplies,
   robotActionSchema,
   robotPathQuerySchema,
   roleDefaultSchema,
@@ -95,6 +97,23 @@ export class OpsService {
   }
 
   async listFloorplans(tenantId: string, siteId: string) {
+    if (siteId === "all") {
+      const floorplans = await this.prisma.floorplan.findMany({
+        where: { tenantId },
+        orderBy: [{ siteId: "asc" }, { name: "asc" }]
+      });
+
+      const zones = await this.prisma.zone.findMany({
+        where: { tenantId, floorplanId: { in: floorplans.map((floorplan) => floorplan.id) } },
+        orderBy: { name: "asc" }
+      });
+
+      return floorplans.map((floorplan) => ({
+        ...floorplan,
+        zones: zones.filter((zone) => zone.floorplanId === floorplan.id)
+      }));
+    }
+
     const site = await this.prisma.site.findFirst({ where: { id: siteId, tenantId } });
     if (!site) {
       throw new NotFoundException("Site not found");
@@ -121,7 +140,7 @@ export class OpsService {
     return this.prisma.robot.findMany({
       where: {
         tenantId,
-        ...(filters.site_id ? { siteId: filters.site_id } : {}),
+        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
         ...(filters.status ? { status: filters.status } : {}),
         ...(filters.tag ? { tags: { has: filters.tag } } : {}),
         ...(filters.vendor ? { vendorId: filters.vendor } : {}),
@@ -182,6 +201,17 @@ export class OpsService {
       throw new BadRequestException(parsed.error.flatten());
     }
 
+    const actionPermission: Record<string, Permission> = {
+      dock: "robots.control.dock",
+      pause: "robots.control.pause",
+      resume: "robots.control.resume",
+      speed_limit: "robots.control.speed_limit"
+    };
+    const requiredPermission = actionPermission[parsed.data.action];
+    if (!this.hasPermission(user, requiredPermission) && !this.hasPermission(user, "robots.control")) {
+      throw new ForbiddenException("Insufficient permissions");
+    }
+
     const robot = await this.prisma.robot.findFirst({ where: { id: robotId, tenantId } });
     if (!robot) {
       throw new NotFoundException("Robot not found");
@@ -211,7 +241,7 @@ export class OpsService {
     return this.prisma.mission.findMany({
       where: {
         tenantId,
-        ...(filters.site_id ? { siteId: filters.site_id } : {}),
+        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
         ...(filters.state ? { state: filters.state } : {})
       },
       include: {
@@ -337,7 +367,7 @@ export class OpsService {
     return this.prisma.incident.findMany({
       where: {
         tenantId,
-        ...(filters.site_id ? { siteId: filters.site_id } : {}),
+        ...(filters.site_id && filters.site_id !== "all" ? { siteId: filters.site_id } : {}),
         ...(filters.status ? { status: filters.status } : {}),
         ...(filters.severity ? { severity: filters.severity } : {}),
         ...(filters.category ? { category: filters.category } : {}),
@@ -675,7 +705,7 @@ export class OpsService {
     return this.prisma.asset.findMany({
       where: {
         tenantId,
-        ...(siteId ? { siteId } : {})
+        ...(siteId && siteId !== "all" ? { siteId } : {})
       },
       include: {
         proximityEvents: {
@@ -1362,7 +1392,11 @@ export class OpsService {
   }
 
   private hasPermission(user: RequestUser, permission: Permission) {
-    return user.role === "Owner" || user.permissions.includes(permission);
+    if (user.role === "Owner") {
+      return true;
+    }
+    const normalized = normalizePermissions(user.permissions ?? []);
+    return normalized.some((granted) => permissionImplies(granted, permission));
   }
 
   private assertCanManageSavedView(user: RequestUser, ownerId: string) {

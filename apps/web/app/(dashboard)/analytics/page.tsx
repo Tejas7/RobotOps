@@ -46,6 +46,23 @@ interface ExportResponse {
   content: string;
 }
 
+interface CrossSiteResponse {
+  totals: {
+    sites: number;
+    missionsTotal: number;
+    missionsSucceeded: number;
+    incidentsOpen: number;
+  };
+  bySite: Array<{
+    siteId: string;
+    missionsTotal: number;
+    missionsSucceeded: number;
+    incidentsOpen: number;
+    interventionsPer100Missions: number;
+    uptimePercent: number;
+  }>;
+}
+
 export default function AnalyticsPage() {
   const { siteId, timeRange } = useGlobalFilters();
   const searchParams = useSearchParams();
@@ -53,10 +70,16 @@ export default function AnalyticsPage() {
 
   const effectiveSiteId = searchParams.get("site_id") ?? siteId;
   const effectiveTimeRange = searchParams.get("time_range") ?? timeRange;
+  const isAllSites = effectiveSiteId === "all";
 
   const dashboardQuery = useAuthedQuery<AnalyticsResponse>(
     ["analytics-dashboard", effectiveSiteId, effectiveTimeRange],
-    `/analytics/dashboard?site_id=${effectiveSiteId}`
+    `/analytics/dashboard?site_id=${effectiveSiteId}&granularity=hour&use_rollups=true`
+  );
+  const crossSiteQuery = useAuthedQuery<CrossSiteResponse>(
+    ["analytics-cross-site", effectiveTimeRange],
+    `/analytics/cross-site?site_id=all&granularity=hour&use_rollups=true`,
+    { enabled: isAllSites }
   );
 
   const data = dashboardQuery.data;
@@ -76,12 +99,12 @@ export default function AnalyticsPage() {
     [data]
   );
 
-  async function download(format: "csv" | "pdf") {
+  async function download(format: "csv" | "pdf", dataset: "dashboard" | "cross_site") {
     if (!session?.accessToken) {
       return;
     }
     const result = await apiFetch<ExportResponse>(
-      `/analytics/export?format=${format}&site_id=${effectiveSiteId}`,
+      `/analytics/export?format=${format}&site_id=${effectiveSiteId}&dataset=${dataset}&granularity=hour&use_rollups=true`,
       session.accessToken
     );
 
@@ -104,7 +127,7 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <PageTitle
         title="Analytics"
-        subtitle={`Performance, reliability, and utilization for site ${effectiveSiteId} (${effectiveTimeRange}).`}
+        subtitle={`Performance, reliability, and utilization for ${isAllSites ? "all sites" : `site ${effectiveSiteId}`} (${effectiveTimeRange}).`}
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -122,10 +145,32 @@ export default function AnalyticsPage() {
             <CardTitle>Export analytics</CardTitle>
             <CardMeta>Download summarized reporting data</CardMeta>
           </div>
-          <Button className="ml-auto" onClick={() => void download("csv")}>Export CSV</Button>
-          <Button variant="secondary" onClick={() => void download("pdf")}>Export PDF summary</Button>
+          <Button className="ml-auto" onClick={() => void download("csv", isAllSites ? "cross_site" : "dashboard")}>
+            Export CSV
+          </Button>
+          <Button variant="secondary" onClick={() => void download("pdf", isAllSites ? "cross_site" : "dashboard")}>
+            Export PDF summary
+          </Button>
         </div>
       </Card>
+
+      {isAllSites ? (
+        <Card>
+          <CardTitle>Cross-site comparison</CardTitle>
+          <CardMeta>Rollup-backed summary per site</CardMeta>
+          <div className="mt-3 space-y-2 text-sm">
+            {(crossSiteQuery.data?.bySite ?? []).map((site) => (
+              <div key={site.siteId} className="rounded-2xl border border-border bg-surface px-3 py-2">
+                <p className="font-medium">{site.siteId}</p>
+                <p className="text-xs text-muted">
+                  missions: {site.missionsTotal} ({site.missionsSucceeded} succeeded) • incidents open: {site.incidentsOpen} • uptime:{" "}
+                  {site.uptimePercent}%
+                </p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <section className="grid gap-4 xl:grid-cols-2">
         <Card>

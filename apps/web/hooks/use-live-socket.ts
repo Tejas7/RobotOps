@@ -37,7 +37,7 @@ export function useLiveSocket() {
     const onConnect = () => {
       setConnected(true);
       instance.emit("live.subscribe", {
-        channels: ["robots.live", "incidents.live", "missions.live", "telemetry.live"]
+        channels: ["robots.live", "incidents.live", "missions.live", "telemetry.live", "alerts.live"]
       });
     };
 

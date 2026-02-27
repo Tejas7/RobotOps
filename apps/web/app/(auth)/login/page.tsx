@@ -31,10 +31,10 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
+    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
+      <RobotOpsLogo iconSize={64} titleClassName="text-4xl" className="mb-8 self-center" />
       <div className="w-full rounded-3xl border border-border bg-surface p-8 shadow-soft">
-        <RobotOpsLogo iconSize={40} className="mb-1" />
-        <h1 className="mt-1 text-2xl font-semibold">Sign in</h1>
+        <h1 className="text-2xl font-semibold">Sign in</h1>
         <p className="mt-2 text-sm text-muted">Use seeded credentials to access the demo tenant.</p>
 
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>

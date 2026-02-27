@@ -250,6 +250,22 @@ export interface DashboardConfigValidationError {
   message: string;
 }
 
+export interface TelemetryIngestEvent {
+  eventId: string;
+  dedupeKey: string;
+  robotId: string;
+  siteId: string | null;
+  timestamp: string;
+  metrics: Record<string, number>;
+}
+
+export interface TelemetryIngestResponse {
+  accepted: number;
+  duplicate: number;
+  queued: number;
+  source: string;
+}
+
 export interface TelemetryBucket {
   timestamp: string;
   value: number;
@@ -282,6 +298,158 @@ export interface RobotPathPoint {
   timestamp: string;
 }
 
+export interface CrossSiteAnalyticsSitePoint {
+  siteId: string;
+  missionsTotal: number;
+  missionsSucceeded: number;
+  incidentsOpen: number;
+  interventionsPer100Missions: number;
+  uptimePercent: number;
+}
+
+export interface CrossSiteAnalyticsTrendPoint {
+  bucketStart: string;
+  siteId: string;
+  missionsTotal: number;
+  incidentsOpen: number;
+}
+
+export interface CrossSiteAnalyticsResponse {
+  window: {
+    from: string;
+    to: string;
+    granularity: "hour" | "day";
+  };
+  totals: {
+    sites: number;
+    missionsTotal: number;
+    missionsSucceeded: number;
+    incidentsOpen: number;
+  };
+  bySite: CrossSiteAnalyticsSitePoint[];
+  trend: CrossSiteAnalyticsTrendPoint[];
+}
+
+export interface AlertPolicyStep {
+  id: string;
+  policyId: string;
+  orderIndex: number;
+  delaySeconds: number;
+  channel: "slack" | "teams" | "email" | "webhook" | "pager";
+  target: string;
+  severityMin: "info" | "warning" | "major" | "critical" | null;
+  template: string | null;
+}
+
+export interface AlertPolicy {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  steps: AlertPolicyStep[];
+}
+
+export interface AlertRule {
+  id: string;
+  tenantId: string;
+  name: string;
+  eventType: "incident" | "integration_error";
+  policyId: string;
+  priority: number;
+  isActive: boolean;
+  severity: "info" | "warning" | "major" | "critical" | null;
+  category: string | null;
+  siteId: string | null;
+  conditions: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertDeliveryResponse {
+  id: string;
+  alertEventId: string;
+  policyStepId: string | null;
+  state: "scheduled" | "sent" | "failed" | "canceled";
+  attempt: number;
+  channel: "slack" | "teams" | "email" | "webhook" | "pager";
+  target: string;
+  scheduledFor: string;
+  sentAt: string | null;
+  message: string;
+  error: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface AlertEventResponse {
+  id: string;
+  tenantId: string;
+  incidentId: string | null;
+  ruleId: string | null;
+  policyId: string | null;
+  state: "open" | "acknowledged" | "resolved";
+  severity: "info" | "warning" | "major" | "critical";
+  title: string;
+  payload: Record<string, unknown>;
+  triggeredAt: string;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  resolvedAt: string | null;
+  deliveries: AlertDeliveryResponse[];
+}
+
+export interface ScopeCatalog {
+  version: number;
+  scopes: Permission[];
+  deprecatedScopes: Permission[];
+  aliases: Partial<Record<Permission, Permission[]>>;
+}
+
+export interface RoleScopeOverride {
+  role: Role;
+  allowScopes: Permission[];
+  denyScopes: Permission[];
+}
+
+export interface RoleScopeMatrix {
+  tenantId: string;
+  roles: Array<{
+    role: Role;
+    baseScopes: Permission[];
+    effectiveScopes: Permission[];
+    overrides: RoleScopeOverride | null;
+  }>;
+}
+
+export interface PipelineStatusResponse {
+  timestamp: string;
+  nats: {
+    connected: boolean;
+    stream: string;
+    subject: string;
+  };
+  ingestion: {
+    queued: number;
+    processed: number;
+    failed: number;
+    deadLetters: number;
+  };
+  rollups: {
+    siteHourlyLatest: string | null;
+    tenantHourlyLatest: string | null;
+    freshnessSeconds: number | null;
+  };
+  timescale: {
+    extensionAvailable: boolean;
+    hypertableReady: boolean;
+    continuousAggregates: string[];
+  };
+}
+
 export interface CopilotThread {
   id: string;
   tenantId: string;
@@ -307,6 +475,7 @@ export interface AuthUser {
   tenantId: string;
   role: Role;
   permissions: Permission[];
+  scopeVersion?: number;
 }
 
 export interface AuditEventInput {
@@ -318,7 +487,7 @@ export interface AuditEventInput {
   actorId: string;
 }
 
-export type LiveChannel = "robots.live" | "incidents.live" | "missions.live" | "telemetry.live";
+export type LiveChannel = "robots.live" | "incidents.live" | "missions.live" | "telemetry.live" | "alerts.live";
 
 export interface LiveEvent<T = unknown> {
   channel: LiveChannel;

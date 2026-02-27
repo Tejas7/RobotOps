@@ -3,6 +3,7 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
+import { InfrastructureService } from "./services/infrastructure.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -20,6 +21,9 @@ async function bootstrap() {
     })
   );
   app.useGlobalFilters(new HttpExceptionFilter());
+
+  const infrastructure = app.get(InfrastructureService);
+  await infrastructure.runStartupChecks();
 
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port);

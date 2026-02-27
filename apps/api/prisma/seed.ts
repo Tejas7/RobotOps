@@ -3,6 +3,16 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.alertDelivery.deleteMany();
+  await prisma.alertEvent.deleteMany();
+  await prisma.alertRule.deleteMany();
+  await prisma.alertPolicyStep.deleteMany();
+  await prisma.alertPolicy.deleteMany();
+  await prisma.roleScopeOverride.deleteMany();
+  await prisma.tenantAnalyticsRollupHourly.deleteMany();
+  await prisma.siteAnalyticsRollupHourly.deleteMany();
+  await prisma.telemetryDeadLetter.deleteMany();
+  await prisma.ingestionEvent.deleteMany();
   await prisma.copilotMessage.deleteMany();
   await prisma.copilotThread.deleteMany();
   await prisma.roleDashboardDefault.deleteMany();
@@ -2060,6 +2070,274 @@ async function main() {
   }
 
   await prisma.robotPathPoint.createMany({ data: pathRows });
+
+  await prisma.roleScopeOverride.createMany({
+    data: [
+      {
+        id: "rso1",
+        tenantId: "t1",
+        role: "Operator",
+        allowScopes: ["alerts.read"],
+        denyScopes: ["incidents.resolve"],
+        createdBy: "u1",
+        updatedBy: "u1",
+        createdAt: new Date("2026-02-26T22:10:00Z"),
+        updatedAt: new Date("2026-02-26T22:10:00Z")
+      }
+    ]
+  });
+
+  await prisma.alertPolicy.createMany({
+    data: [
+      {
+        id: "ap1",
+        tenantId: "t1",
+        name: "Critical Incident Escalation",
+        description: "Escalate critical and major incident alerts through deterministic channels",
+        isActive: true,
+        createdBy: "u1",
+        createdAt: new Date("2026-02-26T22:11:00Z"),
+        updatedAt: new Date("2026-02-26T22:11:00Z")
+      }
+    ]
+  });
+
+  await prisma.alertPolicyStep.createMany({
+    data: [
+      {
+        id: "aps1",
+        tenantId: "t1",
+        policyId: "ap1",
+        orderIndex: 0,
+        delaySeconds: 0,
+        channel: "slack",
+        target: "#robotops-alerts",
+        severityMin: "warning",
+        template: "Incident {{incident_id}} opened",
+        createdAt: new Date("2026-02-26T22:11:05Z"),
+        updatedAt: new Date("2026-02-26T22:11:05Z")
+      },
+      {
+        id: "aps2",
+        tenantId: "t1",
+        policyId: "ap1",
+        orderIndex: 1,
+        delaySeconds: 300,
+        channel: "email",
+        target: "oncall@demo.com",
+        severityMin: "major",
+        template: "Escalation step 2 for {{incident_id}}",
+        createdAt: new Date("2026-02-26T22:11:06Z"),
+        updatedAt: new Date("2026-02-26T22:11:06Z")
+      }
+    ]
+  });
+
+  await prisma.alertRule.createMany({
+    data: [
+      {
+        id: "ar1",
+        tenantId: "t1",
+        name: "Safety Major/Critical Incidents",
+        eventType: "incident",
+        policyId: "ap1",
+        priority: 10,
+        isActive: true,
+        severity: "major",
+        category: "safety",
+        siteId: "s1",
+        conditions: { source: "seed" },
+        createdBy: "u1",
+        createdAt: new Date("2026-02-26T22:12:00Z"),
+        updatedAt: new Date("2026-02-26T22:12:00Z")
+      },
+      {
+        id: "ar2",
+        tenantId: "t1",
+        name: "Integration Connector Errors",
+        eventType: "integration_error",
+        policyId: "ap1",
+        priority: 30,
+        isActive: true,
+        severity: "major",
+        category: "integration",
+        siteId: null,
+        conditions: { source: "seed" },
+        createdBy: "u1",
+        createdAt: new Date("2026-02-26T22:13:00Z"),
+        updatedAt: new Date("2026-02-26T22:13:00Z")
+      }
+    ]
+  });
+
+  await prisma.alertEvent.createMany({
+    data: [
+      {
+        id: "ae1",
+        tenantId: "t1",
+        ruleId: "ar1",
+        policyId: "ap1",
+        incidentId: "i1",
+        state: "open",
+        severity: "major",
+        title: "Restricted zone entry alert",
+        payload: {
+          site_id: "s1",
+          severity: "major",
+          category: "safety",
+          incident_id: "i1"
+        },
+        triggeredAt: new Date("2026-02-26T23:12:10Z"),
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+        resolvedAt: null,
+        createdAt: new Date("2026-02-26T23:12:10Z"),
+        updatedAt: new Date("2026-02-26T23:12:10Z")
+      }
+    ]
+  });
+
+  await prisma.alertDelivery.createMany({
+    data: [
+      {
+        id: "ad1",
+        tenantId: "t1",
+        alertEventId: "ae1",
+        policyStepId: "aps1",
+        attempt: 1,
+        state: "sent",
+        channel: "slack",
+        target: "#robotops-alerts",
+        scheduledFor: new Date("2026-02-26T23:12:10Z"),
+        sentAt: new Date("2026-02-26T23:12:13Z"),
+        message: "Deterministic stub delivery sent to slack:#robotops-alerts",
+        error: null,
+        details: { deterministic: true },
+        createdAt: new Date("2026-02-26T23:12:10Z"),
+        updatedAt: new Date("2026-02-26T23:12:13Z")
+      },
+      {
+        id: "ad2",
+        tenantId: "t1",
+        alertEventId: "ae1",
+        policyStepId: "aps2",
+        attempt: 1,
+        state: "scheduled",
+        channel: "email",
+        target: "oncall@demo.com",
+        scheduledFor: new Date("2026-02-26T23:17:10Z"),
+        sentAt: null,
+        message: "Scheduled deterministic email delivery",
+        error: null,
+        details: { deterministic: true },
+        createdAt: new Date("2026-02-26T23:12:10Z"),
+        updatedAt: new Date("2026-02-26T23:12:10Z")
+      }
+    ]
+  });
+
+  await prisma.siteAnalyticsRollupHourly.createMany({
+    data: [
+      {
+        id: "sarh1",
+        tenantId: "t1",
+        siteId: "s1",
+        bucketStart: new Date("2026-02-26T22:00:00Z"),
+        missionsTotal: 7,
+        missionsSucceeded: 5,
+        incidentsOpen: 3,
+        interventionsCount: 4,
+        fleetSize: 8,
+        uptimePercent: 75,
+        createdAt: new Date("2026-02-26T23:00:00Z"),
+        updatedAt: new Date("2026-02-26T23:00:00Z")
+      },
+      {
+        id: "sarh2",
+        tenantId: "t1",
+        siteId: "s2",
+        bucketStart: new Date("2026-02-26T22:00:00Z"),
+        missionsTotal: 3,
+        missionsSucceeded: 2,
+        incidentsOpen: 2,
+        interventionsCount: 1,
+        fleetSize: 4,
+        uptimePercent: 50,
+        createdAt: new Date("2026-02-26T23:00:00Z"),
+        updatedAt: new Date("2026-02-26T23:00:00Z")
+      }
+    ]
+  });
+
+  await prisma.tenantAnalyticsRollupHourly.createMany({
+    data: [
+      {
+        id: "tarh1",
+        tenantId: "t1",
+        bucketStart: new Date("2026-02-26T22:00:00Z"),
+        missionsTotal: 10,
+        missionsSucceeded: 7,
+        incidentsOpen: 5,
+        interventionsCount: 5,
+        fleetSize: 12,
+        uptimePercent: 67,
+        createdAt: new Date("2026-02-26T23:00:00Z"),
+        updatedAt: new Date("2026-02-26T23:00:00Z")
+      }
+    ]
+  });
+
+  await prisma.ingestionEvent.createMany({
+    data: [
+      {
+        id: "ievt1",
+        tenantId: "t1",
+        source: "seed",
+        dedupeKey: "seed:r1:2026-02-26T23:15:00Z:battery",
+        status: "processed",
+        payload: {
+          robot_id: "r1",
+          timestamp: "2026-02-26T23:15:00Z",
+          metrics: { battery: 82 }
+        },
+        error: null,
+        createdAt: new Date("2026-02-26T23:15:01Z"),
+        processedAt: new Date("2026-02-26T23:15:02Z")
+      },
+      {
+        id: "ievt2",
+        tenantId: "t1",
+        source: "seed",
+        dedupeKey: "seed:r2:2026-02-26T23:16:00Z:temp_c",
+        status: "failed",
+        payload: {
+          robot_id: "r2",
+          timestamp: "bad-timestamp",
+          metrics: { temp_c: 91 }
+        },
+        error: "Invalid ingestion payload",
+        createdAt: new Date("2026-02-26T23:16:01Z"),
+        processedAt: null
+      }
+    ]
+  });
+
+  await prisma.telemetryDeadLetter.createMany({
+    data: [
+      {
+        id: "tdl1",
+        tenantId: "t1",
+        source: "seed",
+        payload: {
+          robot_id: "r2",
+          timestamp: "bad-timestamp",
+          metrics: { temp_c: 91 }
+        },
+        error: "Invalid ingestion payload",
+        createdAt: new Date("2026-02-26T23:16:03Z")
+      }
+    ]
+  });
 
   console.log("Seed complete");
 }

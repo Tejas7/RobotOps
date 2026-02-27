@@ -8,11 +8,23 @@ import { PrismaService } from "./services/prisma.service";
 import { OpsService } from "./services/ops.service";
 import { CopilotService } from "./services/copilot.service";
 import { AuditService } from "./services/audit.service";
+import { NatsJetStreamService } from "./services/nats-jetstream.service";
+import { InfrastructureService } from "./services/infrastructure.service";
+import { Phase3Service } from "./services/phase3.service";
 import { LiveGateway } from "./realtime/live.gateway";
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), AuthModule],
   controllers: [AppController, OpsController, CopilotController],
-  providers: [PrismaService, OpsService, CopilotService, AuditService, LiveGateway]
+  providers: [
+    PrismaService,
+    OpsService,
+    CopilotService,
+    AuditService,
+    NatsJetStreamService,
+    InfrastructureService,
+    Phase3Service,
+    LiveGateway
+  ]
 })
 export class AppModule {}

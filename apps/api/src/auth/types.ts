@@ -7,4 +7,5 @@ export interface RequestUser {
   tenantId: string;
   role: Role;
   permissions: Permission[];
+  scope_version?: number;
 }

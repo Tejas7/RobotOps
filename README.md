@@ -7,6 +7,11 @@ Robotics operations and orchestration dashboard for heterogeneous fleets.
 - `apps/api`: NestJS backend (TypeScript, Prisma, WebSocket live gateway)
 - `packages/shared`: shared RBAC constants, domain types, and Zod schemas
 
+## Product status (Phases 1-3)
+- Phase 1: Core operations platform shipped (`Overview`, `Fleet`, `Missions`, `Incidents`, `Facility`, `Teleoperation`, `Developer`, `Copilot`) with tenant-scoped RBAC and live operations feeds.
+- Phase 2: Telemetry downsampling, robot path playback, saved views with role defaults, integrations test flows, audit diff rendering, and full `Analytics`/`Integrations`/`Settings` experience.
+- Phase 3: Timescale-ready telemetry model, NATS-backed ingestion path, fine-grained scope-based RBAC (with legacy aliases), cross-site analytics and export, alert rules/policies/escalation flow, and pipeline health/status surfaces.
+
 ## Prerequisites
 - Node.js 20+
 - npm 10+
@@ -25,6 +30,10 @@ cp apps/web/.env.example apps/web/.env.local
 ```bash
 docker compose up -d
 ```
+
+Phase 3 local dependencies now include:
+- Timescale-enabled PostgreSQL (via `timescale/timescaledb` image)
+- NATS with JetStream (`localhost:4222`, monitor `localhost:8222`)
 
 ## Install dependencies
 ```bash
@@ -78,11 +87,15 @@ Current seed data includes richer cross-page coverage:
 npm run typecheck
 npm run build
 npm run qa:phase1
+npm run qa:phase2
+npm run qa:phase3
 ```
 
 ## Notes
 - JWT tenant + role + permissions are issued by NextAuth credentials login.
 - Backend enforces tenant scoping and RBAC for protected endpoints.
 - Live channels emitted: `robots.live`, `incidents.live`, `missions.live`, `telemetry.live`.
-- Phase 1 includes working page implementations plus integration/analytics/settings placeholders.
+- Phase 3 adds `alerts.live` plus `/system/pipeline-status` for ingestion/rollup readiness.
+- Dashboard branding uses the RobotOps logo on login and shell navigation.
 - Floorplan overlay assets use PNG files under `apps/web/public/static/floorplans`.
+- New backend env vars for Phase 3: `NATS_URL`, `NATS_STREAM`, `NATS_SUBJECT_TELEMETRY`, `ROLLUP_JOB_INTERVAL_SECONDS`, `ALERT_ENGINE_INTERVAL_SECONDS`, `TIMESCALE_RAW_RETENTION_DAYS`, `TIMESCALE_ROLLUP_RETENTION_DAYS`.

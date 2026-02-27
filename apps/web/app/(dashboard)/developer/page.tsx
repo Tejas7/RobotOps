@@ -34,6 +34,14 @@ interface AuditResponse {
   next_cursor: string | null;
 }
 
+interface PipelineStatus {
+  timestamp: string;
+  nats: { connected: boolean; stream: string; subject: string };
+  ingestion: { queued: number; processed: number; failed: number; deadLetters: number };
+  rollups: { siteHourlyLatest: string | null; tenantHourlyLatest: string | null; freshnessSeconds: number | null };
+  timescale: { extensionAvailable: boolean; hypertableReady: boolean; continuousAggregates: string[] };
+}
+
 const REST_ENDPOINTS = [
   "GET /tenants/me",
   "GET /sites",
@@ -56,12 +64,18 @@ const REST_ENDPOINTS = [
   "POST /integrations/{id}/test",
   "GET /dashboard-configs",
   "POST /dashboard-configs/validate",
-  "GET /analytics/dashboard"
+  "GET /analytics/dashboard",
+  "GET /analytics/cross-site?site_id=all",
+  "POST /ingest/telemetry",
+  "GET /alerts/events",
+  "GET /rbac/scopes",
+  "GET /system/pipeline-status"
 ];
 
 export default function DeveloperPage() {
   const { data: session } = useSession();
   const apiKeysQuery = useAuthedQuery<ApiKey[]>(["api-keys"], "/api-keys");
+  const pipelineStatusQuery = useAuthedQuery<PipelineStatus>(["pipeline-status"], "/system/pipeline-status");
   const { socket, connected } = useLiveSocket();
 
   const [selectedEndpoint, setSelectedEndpoint] = useState(REST_ENDPOINTS[0]);
@@ -89,7 +103,7 @@ export default function DeveloperPage() {
       return;
     }
 
-    const channels = ["robots.live", "incidents.live", "missions.live", "telemetry.live"] as const;
+    const channels = ["robots.live", "incidents.live", "missions.live", "telemetry.live", "alerts.live"] as const;
     channels.forEach((channel) => {
       socket.on(channel, (payload) => {
         setStreamLogs((current) => [`${channel}: ${JSON.stringify(payload).slice(0, 180)}...`, ...current].slice(0, 20));
@@ -140,10 +154,15 @@ export default function DeveloperPage() {
         <Card>
           <CardTitle>API explorer (REST)</CardTitle>
           <CardMeta>Endpoint index with token-aware cURL</CardMeta>
+          <label htmlFor="developer-endpoint-selector" className="sr-only">
+            Select API endpoint
+          </label>
           <select
+            id="developer-endpoint-selector"
             className="mt-3 w-full rounded-2xl border border-border bg-white px-3 py-2 text-sm"
             value={selectedEndpoint}
             onChange={(event) => setSelectedEndpoint(event.target.value)}
+            aria-label="Select API endpoint"
           >
             {REST_ENDPOINTS.map((endpoint) => (
               <option key={endpoint} value={endpoint}>
@@ -177,13 +196,50 @@ export default function DeveloperPage() {
       </div>
 
       <Card>
+        <CardTitle>Pipeline status</CardTitle>
+        <CardMeta>Ingestion, bus, rollup freshness, and Timescale readiness</CardMeta>
+        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-border bg-surface p-3">
+            <p className="font-medium">NATS</p>
+            <p className="text-xs text-muted">
+              {pipelineStatusQuery.data?.nats.connected ? "Connected" : "Disconnected"} • {pipelineStatusQuery.data?.nats.stream ?? "-"}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-border bg-surface p-3">
+            <p className="font-medium">Ingestion queue</p>
+            <p className="text-xs text-muted">
+              queued {pipelineStatusQuery.data?.ingestion.queued ?? 0} • failed {pipelineStatusQuery.data?.ingestion.failed ?? 0}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-border bg-surface p-3">
+            <p className="font-medium">Rollups</p>
+            <p className="text-xs text-muted">
+              freshness {pipelineStatusQuery.data?.rollups.freshnessSeconds ?? "-"}s
+            </p>
+          </div>
+          <div className="rounded-2xl border border-border bg-surface p-3">
+            <p className="font-medium">Timescale</p>
+            <p className="text-xs text-muted">
+              ext {pipelineStatusQuery.data?.timescale.extensionAvailable ? "on" : "off"} • hypertable{" "}
+              {pipelineStatusQuery.data?.timescale.hypertableReady ? "ready" : "pending"}
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
         <CardTitle>Audit log explorer</CardTitle>
         <CardMeta>Queryable audit records with structured diff rendering</CardMeta>
         <div className="mt-3 grid gap-2 md:grid-cols-[220px_1fr_auto]">
+          <label htmlFor="developer-audit-resource-filter" className="sr-only">
+            Filter audit by resource
+          </label>
           <select
+            id="developer-audit-resource-filter"
             className="rounded-2xl border border-border bg-white px-3 py-2 text-sm"
             value={auditResourceType}
             onChange={(event) => setAuditResourceType(event.target.value)}
+            aria-label="Filter audit by resource"
           >
             <option value="all">All resources</option>
             <option value="robot">Robot</option>

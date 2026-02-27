@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16
+    image: timescale/timescaledb:2.17.2-pg16
     container_name: robotops-postgres
     ports:
       - "5432:5432"
@@ -22,6 +22,17 @@ services:
     volumes:
       - robotops_redis:/data
 
+  nats:
+    image: nats:2.11-alpine
+    container_name: robotops-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - robotops_nats:/data
+
 volumes:
   robotops_postgres:
   robotops_redis:
+  robotops_nats:

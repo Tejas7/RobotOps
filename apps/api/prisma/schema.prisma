@@ -31,6 +31,16 @@ model Tenant {
   roleDashboardDefaults RoleDashboardDefault[]
   dashboardConfigs DashboardConfig[]
   copilotThreads CopilotThread[]
+  ingestionEvents IngestionEvent[]
+  telemetryDeadLetters TelemetryDeadLetter[]
+  siteAnalyticsRollups SiteAnalyticsRollupHourly[]
+  tenantAnalyticsRollups TenantAnalyticsRollupHourly[]
+  alertRules AlertRule[]
+  alertPolicies AlertPolicy[]
+  alertPolicySteps AlertPolicyStep[]
+  alertEvents AlertEvent[]
+  alertDeliveries AlertDelivery[]
+  roleScopeOverrides RoleScopeOverride[]
 }
 
 model User {
@@ -59,6 +69,7 @@ model Site {
   incidents  Incident[]
   assets     Asset[]
   proximities ProximityEvent[]
+  analyticsRollups SiteAnalyticsRollupHourly[]
 }
 
 model Floorplan {
@@ -285,6 +296,34 @@ model IntegrationTestRun {
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+model IngestionEvent {
+  id          String   @id
+  tenantId    String
+  source      String
+  dedupeKey   String
+  status      String
+  payload     Json
+  error       String?
+  createdAt   DateTime @default(now())
+  processedAt DateTime?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status, createdAt])
+}
+
+model TelemetryDeadLetter {
+  id        String   @id
+  tenantId  String
+  source    String
+  payload   Json
+  error     String
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+}
+
 model AuditLog {
   id           String   @id
   tenantId     String
@@ -345,6 +384,170 @@ model DashboardConfig {
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+model SiteAnalyticsRollupHourly {
+  id                 String   @id
+  tenantId           String
+  siteId             String
+  bucketStart        DateTime
+  missionsTotal      Int
+  missionsSucceeded  Int
+  incidentsOpen      Int
+  interventionsCount Int
+  fleetSize          Int
+  uptimePercent      Int
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site               Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, siteId, bucketStart])
+  @@index([tenantId, bucketStart])
+  @@index([tenantId, siteId, bucketStart])
+}
+
+model TenantAnalyticsRollupHourly {
+  id                 String   @id
+  tenantId           String
+  bucketStart        DateTime
+  missionsTotal      Int
+  missionsSucceeded  Int
+  incidentsOpen      Int
+  interventionsCount Int
+  fleetSize          Int
+  uptimePercent      Int
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, bucketStart])
+  @@index([tenantId, bucketStart])
+}
+
+model AlertPolicy {
+  id          String            @id
+  tenantId    String
+  name        String
+  description String?
+  isActive    Boolean           @default(true)
+  createdBy   String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  steps       AlertPolicyStep[]
+  rules       AlertRule[]
+  events      AlertEvent[]
+
+  @@index([tenantId, isActive])
+}
+
+model AlertPolicyStep {
+  id          String       @id
+  tenantId    String
+  policyId    String
+  orderIndex  Int
+  delaySeconds Int
+  channel     String
+  target      String
+  severityMin String?
+  template    String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  policy      AlertPolicy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries  AlertDelivery[]
+
+  @@unique([policyId, orderIndex])
+  @@index([tenantId, policyId])
+}
+
+model AlertRule {
+  id         String      @id
+  tenantId   String
+  name       String
+  eventType  String
+  policyId   String
+  priority   Int         @default(100)
+  isActive   Boolean     @default(true)
+  severity   String?
+  category   String?
+  siteId     String?
+  conditions Json
+  createdBy  String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  policy     AlertPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  events     AlertEvent[]
+
+  @@index([tenantId, isActive, priority])
+  @@index([tenantId, eventType])
+}
+
+model AlertEvent {
+  id             String          @id
+  tenantId       String
+  ruleId         String?
+  policyId       String?
+  incidentId     String?
+  state          String
+  severity       String
+  title          String
+  payload        Json
+  triggeredAt    DateTime
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rule           AlertRule?      @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  policy         AlertPolicy?    @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  deliveries     AlertDelivery[]
+
+  @@index([tenantId, state, triggeredAt])
+  @@index([tenantId, incidentId])
+}
+
+model AlertDelivery {
+  id           String          @id
+  tenantId     String
+  alertEventId String
+  policyStepId String?
+  attempt      Int             @default(1)
+  state        String
+  channel      String
+  target       String
+  scheduledFor DateTime
+  sentAt       DateTime?
+  message      String
+  error        String?
+  details      Json
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alertEvent   AlertEvent      @relation(fields: [alertEventId], references: [id], onDelete: Cascade)
+  policyStep   AlertPolicyStep? @relation(fields: [policyStepId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, state, scheduledFor])
+  @@index([tenantId, alertEventId])
+}
+
+model RoleScopeOverride {
+  id          String   @id
+  tenantId    String
+  role        String
+  allowScopes String[]
+  denyScopes  String[]
+  createdBy   String
+  updatedBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, role])
+  @@index([tenantId, role])
+}
+
 model CopilotThread {
   id        String          @id
   tenantId  String
@@ -393,5 +596,6 @@ model TelemetryPoint {
   robot      Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
 
   @@index([robotId, metric, timestamp])
+  @@index([tenantId, metric, timestamp])
   @@index([tenantId, robotId, metric, timestamp])
 }
