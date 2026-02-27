@@ -1,0 +1,26 @@
+{
+  "name": "robotops",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "npm --workspace @robotops/web run dev",
+    "dev:api": "npm --workspace @robotops/api run start:dev",
+    "qa:phase1": "node scripts/phase1-qa.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
+    "axe-core": "^4.11.1",
+    "concurrently": "^9.2.1",
+    "playwright": "^1.52.0",
+    "typescript": "^5.8.2"
+  }
+}

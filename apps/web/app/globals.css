@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+:root {
+  --bg: 210 20% 99%;
+  --surface: 210 24% 97%;
+  --border: 214 20% 89%;
+  --text: 222 47% 14%;
+  --muted: 215 18% 42%;
+  --primary: 216 73% 45%;
+  --success: 151 62% 36%;
+  --warning: 36 89% 47%;
+  --danger: 0 72% 50%;
+  --info: 212 85% 43%;
+}
+
+.dark {
+  --bg: 222 28% 10%;
+  --surface: 222 24% 14%;
+  --border: 223 16% 26%;
+  --text: 210 18% 92%;
+  --muted: 215 14% 67%;
+  --primary: 212 100% 67%;
+  --success: 148 56% 51%;
+  --warning: 39 87% 57%;
+  --danger: 0 79% 63%;
+  --info: 208 100% 72%;
+}
+
+html,
+body {
+  background: hsl(var(--bg));
+  color: hsl(var(--text));
+  font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+  min-height: 100%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+.page-shell {
+  background: radial-gradient(circle at 0% -10%, rgba(37, 99, 235, 0.08), transparent 30%),
+    radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.06), transparent 28%),
+    hsl(var(--bg));
+}

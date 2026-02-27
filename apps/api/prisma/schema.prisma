@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id            String          @id
+  name          String
+  plan          String
+  createdAt     DateTime
+  users         User[]
+  sites         Site[]
+  floorplans    Floorplan[]
+  zones         Zone[]
+  vendors       RobotVendor[]
+  robots        Robot[]
+  missions      Mission[]
+  incidents     Incident[]
+  assets        Asset[]
+  proximities   ProximityEvent[]
+  apiKeys       ApiKey[]
+  auditLogs     AuditLog[]
+  copilotThreads CopilotThread[]
+}
+
+model User {
+  id          String   @id
+  tenantId    String
+  email       String   @unique
+  name        String
+  password    String
+  role        String
+  permissions String[]
+  createdAt   DateTime
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model Site {
+  id         String      @id
+  tenantId   String
+  name       String
+  address    String
+  timezone   String
+  createdAt  DateTime
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  floorplans Floorplan[]
+  robots     Robot[]
+  missions   Mission[]
+  incidents  Incident[]
+  assets     Asset[]
+  proximities ProximityEvent[]
+}
+
+model Floorplan {
+  id                  String    @id
+  tenantId            String
+  siteId              String
+  name                String
+  imageUrl            String
+  scaleMetersPerPixel Float
+  originX             Float
+  originY             Float
+  rotationDegrees     Float
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site                Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  zones               Zone[]
+}
+
+model Zone {
+  id                  String    @id
+  tenantId            String
+  floorplanId         String
+  name                String
+  type                String
+  polygon             Json
+  maxSpeedMps         Float
+  requiresOperatorAck Boolean
+  allowedRobotTags    String[]
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  floorplan           Floorplan @relation(fields: [floorplanId], references: [id], onDelete: Cascade)
+  proximities         ProximityEvent[]
+}
+
+model RobotVendor {
+  id                 String  @id
+  tenantId           String
+  name               String
+  integrationType    String
+  supportedProtocols String[]
+  tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  robots             Robot[]
+}
+
+model Robot {
+  id            String   @id
+  tenantId      String
+  siteId        String
+  vendorId      String
+  name          String
+  model         String
+  serial        String
+  tags          String[]
+  status        String
+  batteryPercent Int
+  lastSeenAt    DateTime
+  floorplanId   String
+  x             Float
+  y             Float
+  headingDegrees Float
+  confidence    Float
+  cpuPercent    Int
+  memoryPercent Int
+  tempC         Int
+  networkRssi   Int
+  diskPercent   Int
+  capabilities  String[]
+  connection    String
+  ip            String
+  firmware      String
+  agentVersion  String
+  edgeId        String?
+  createdAt     DateTime
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site          Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  vendor        RobotVendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  missions      Mission[]
+  missionEvents MissionEvent[]
+  incidents     Incident[]
+  telemetries   TelemetryPoint[]
+  proximities   ProximityEvent[]
+}
+
+model Mission {
+  id                 String        @id
+  tenantId           String
+  siteId             String
+  name               String
+  type               String
+  priority           String
+  createdByUserId    String
+  assignedRobotId    String?
+  state              String
+  startTime          DateTime?
+  endTime            DateTime?
+  durationS          Int
+  distanceM          Int
+  stopsCount         Int
+  interventionsCount Int
+  energyUsedWh       Int
+  routeWaypoints     Json
+  routePolyline      Json
+  failureCode        String?
+  failureMessage     String?
+  lastEventId        String?
+  createdAt          DateTime @default(now())
+  tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site               Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  assignedRobot      Robot?        @relation(fields: [assignedRobotId], references: [id], onDelete: SetNull)
+  missionEvents      MissionEvent[]
+  incidents          Incident[]
+}
+
+model MissionEvent {
+  id         String   @id
+  missionId  String
+  robotId    String
+  timestamp  DateTime
+  type       String
+  payload    Json
+  mission    Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  robot      Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+}
+
+model Incident {
+  id             String          @id
+  tenantId       String
+  siteId         String
+  robotId        String?
+  missionId      String?
+  severity       String
+  category       String
+  status         String
+  title          String
+  description    String
+  createdAt      DateTime
+  acknowledgedBy String?
+  resolvedAt     DateTime?
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site           Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  robot          Robot?          @relation(fields: [robotId], references: [id], onDelete: SetNull)
+  mission        Mission?        @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  timeline       IncidentEvent[]
+}
+
+model IncidentEvent {
+  id         String   @id
+  incidentId String
+  timestamp  DateTime
+  type       String
+  message    String
+  meta       Json
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+model Asset {
+  id             String   @id
+  tenantId       String
+  siteId         String
+  type           String
+  name           String
+  tags           String[]
+  floorplanId    String
+  x              Float
+  y              Float
+  headingDegrees Float
+  confidence     Float
+  lastSeenAt     DateTime
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  proximityEvents ProximityEvent[]
+}
+
+model ProximityEvent {
+  id        String   @id
+  tenantId  String
+  siteId    String
+  timestamp DateTime
+  robotId   String
+  assetId   String
+  distanceM Float
+  riskLevel String
+  zoneId    String?
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  robot     Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  zone      Zone?    @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+}
+
+model ApiKey {
+  id         String   @id
+  tenantId   String
+  name       String
+  scopes     String[]
+  createdAt  DateTime
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id           String   @id
+  tenantId     String
+  timestamp    DateTime
+  actorType    String
+  actorId      String
+  action       String
+  resourceType String
+  resourceId   String
+  diff         Json
+  ip           String
+  userAgent    String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model CopilotThread {
+  id        String          @id
+  tenantId  String
+  siteId    String?
+  createdBy String
+  createdAt DateTime
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages  CopilotMessage[]
+}
+
+model CopilotMessage {
+  id        String   @id
+  threadId  String
+  timestamp DateTime
+  role      String
+  content   String
+  toolCalls Json
+  citations Json
+  thread    CopilotThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}
+
+model TelemetryPoint {
+  id         String   @id
+  tenantId   String
+  robotId    String
+  metric     String
+  value      Float
+  timestamp  DateTime
+  robot      Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  @@index([robotId, metric, timestamp])
+}
