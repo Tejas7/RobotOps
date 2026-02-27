@@ -250,21 +250,100 @@ export interface DashboardConfigValidationError {
   message: string;
 }
 
-export interface TelemetryIngestEvent {
-  eventId: string;
-  dedupeKey: string;
-  robotId: string;
-  siteId: string | null;
-  timestamp: string;
-  metrics: Record<string, number>;
+export type CanonicalMessageType = "robot_state" | "robot_event" | "task_status";
+export type CanonicalSeverity = "info" | "warning" | "major" | "critical";
+export type CanonicalCategory =
+  | "navigation"
+  | "traffic"
+  | "battery"
+  | "connectivity"
+  | "hardware"
+  | "safety"
+  | "integration";
+
+export interface CanonicalEnvelopeSource {
+  sourceType: "edge" | "adapter" | "simulator";
+  sourceId: string;
+  vendor: string;
+  protocol: "http" | "websocket" | "internal";
 }
 
-export interface TelemetryIngestResponse {
+export interface CanonicalEnvelopeEntity {
+  entityType: "robot";
+  robotId: string;
+}
+
+export interface RobotStatePayload {
+  status?: Status;
+  batteryPercent?: number;
+  pose?: {
+    floorplanId?: string;
+    x: number;
+    y: number;
+    headingDegrees?: number;
+    confidence?: number;
+  };
+  telemetry?: {
+    cpuPercent?: number;
+    memoryPercent?: number;
+    tempC?: number;
+    diskPercent?: number;
+    networkRssi?: number;
+  };
+  metrics?: Record<string, number>;
+  task?: {
+    taskId?: string;
+    state?: string;
+    percentComplete?: number;
+  };
+  meta?: Record<string, unknown>;
+}
+
+export interface RobotEventPayload {
+  eventId?: string;
+  dedupeKey?: string;
+  eventType: string;
+  severity: CanonicalSeverity;
+  category: CanonicalCategory;
+  title: string;
+  message?: string;
+  createIncident?: boolean;
+  occurredAt?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface TaskStatusPayload {
+  taskId: string;
+  state: "queued" | "running" | "blocked" | "succeeded" | "failed" | "canceled";
+  percentComplete?: number;
+  updatedAt?: string;
+  message?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface CanonicalEnvelope {
+  messageId: string;
+  schemaVersion: number;
+  tenantId: string;
+  siteId: string;
+  messageType: CanonicalMessageType;
+  timestamp: string;
+  source: CanonicalEnvelopeSource;
+  entity: CanonicalEnvelopeEntity;
+  payload: RobotStatePayload | RobotEventPayload | TaskStatusPayload;
+}
+
+export interface CanonicalIngestResponse {
   accepted: number;
   duplicate: number;
   queued: number;
   source: string;
+  schemaVersion: number;
+  messageType: CanonicalMessageType;
+  messageId: string;
 }
+
+export type TelemetryIngestResponse = CanonicalIngestResponse;
 
 export interface TelemetryBucket {
   timestamp: string;

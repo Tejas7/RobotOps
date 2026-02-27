@@ -7,6 +7,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum MessageType {
+  robot_state
+  robot_event
+  task_status
+}
+
+enum Severity {
+  info
+  warning
+  major
+  critical
+}
+
+enum Category {
+  navigation
+  traffic
+  battery
+  connectivity
+  hardware
+  safety
+  integration
+}
+
 model Tenant {
   id            String          @id
   name          String
@@ -31,6 +54,7 @@ model Tenant {
   roleDashboardDefaults RoleDashboardDefault[]
   dashboardConfigs DashboardConfig[]
   copilotThreads CopilotThread[]
+  canonicalMessages CanonicalMessage[]
   ingestionEvents IngestionEvent[]
   telemetryDeadLetters TelemetryDeadLetter[]
   siteAnalyticsRollups SiteAnalyticsRollupHourly[]
@@ -296,20 +320,50 @@ model IntegrationTestRun {
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+model CanonicalMessage {
+  id              String       @id
+  tenantId        String
+  siteId          String
+  messageId       String
+  schemaVersion   Int
+  messageType     MessageType
+  timestamp       DateTime
+  sourceType      String
+  sourceId        String
+  vendor          String
+  protocol        String
+  entityType      String
+  robotId         String
+  severity        Severity?
+  category        Category?
+  payload         Json
+  rawEnvelope     Json
+  createdAt       DateTime     @default(now())
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ingestionEvents IngestionEvent[]
+
+  @@unique([tenantId, messageId])
+  @@index([tenantId, siteId, messageType, timestamp])
+  @@index([tenantId, sourceId, timestamp])
+}
+
 model IngestionEvent {
-  id          String   @id
-  tenantId    String
-  source      String
-  dedupeKey   String
-  status      String
-  payload     Json
-  error       String?
-  createdAt   DateTime @default(now())
-  processedAt DateTime?
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                String            @id
+  tenantId          String
+  canonicalMessageId String?
+  source            String
+  dedupeKey         String
+  status            String
+  payload           Json
+  error             String?
+  createdAt         DateTime          @default(now())
+  processedAt       DateTime?
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  canonicalMessage  CanonicalMessage? @relation(fields: [canonicalMessageId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, dedupeKey])
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, canonicalMessageId])
 }
 
 model TelemetryDeadLetter {

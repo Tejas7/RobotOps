@@ -11,12 +11,17 @@ import {
   alertRuleCreateSchema,
   alertRulePatchSchema,
   alertTestRouteSchema,
+  canonicalEnvelopeSchema,
+  isSupportedCanonicalSchemaVersion,
   crossSiteAnalyticsQuerySchema,
   normalizePermissions,
+  parseCanonicalPayload,
   permissionsForRole,
   roleScopeOverridePatchSchema,
-  telemetryIngestEventSchema,
-  telemetryIngestSchema,
+  type CanonicalEnvelopeInput,
+  type RobotEventPayloadInput,
+  type RobotStatePayloadInput,
+  type TaskStatusPayloadInput,
   type Role
 } from "@robotops/shared";
 import type { RequestUser } from "../auth/types";
@@ -94,76 +99,159 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
   }
 
   async ingestTelemetry(tenantId: string, user: RequestUser, input: unknown) {
-    const parsed = telemetryIngestSchema.safeParse(input);
+    const parsed = canonicalEnvelopeSchema.safeParse(input);
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.flatten());
     }
 
-    let accepted = 0;
-    let duplicate = 0;
-    let queued = 0;
+    const envelope = parsed.data;
+    if (!isSupportedCanonicalSchemaVersion(envelope.schema_version)) {
+      throw new BadRequestException(`Unsupported schema_version: ${envelope.schema_version}`);
+    }
+    if (envelope.tenant_id !== tenantId) {
+      throw new BadRequestException("tenant_id mismatch");
+    }
 
-    for (const event of parsed.data.events) {
-      const dedupeKey =
-        event.dedupe_key ??
-        event.event_id ??
-        `${parsed.data.source}:${event.robot_id}:${event.timestamp}:${Object.entries(event.metrics)
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([metric, value]) => `${metric}:${value}`)
-          .join("|")}`;
+    const site = await this.prisma.site.findFirst({
+      where: {
+        id: envelope.site_id,
+        tenantId
+      },
+      select: { id: true }
+    });
+    if (!site) {
+      throw new BadRequestException("site_id not found for tenant");
+    }
 
-      const existing = await this.prisma.ingestionEvent.findUnique({
-        where: {
-          tenantId_dedupeKey: {
-            tenantId,
-            dedupeKey
-          }
-        }
-      });
-
-      if (existing) {
-        duplicate += 1;
-        continue;
-      }
-
-      const created = await this.prisma.ingestionEvent.create({
-        data: {
-          id: randomUUID(),
+    const existingEvent = await this.prisma.ingestionEvent.findUnique({
+      where: {
+        tenantId_dedupeKey: {
           tenantId,
-          source: parsed.data.source,
-          dedupeKey,
-          status: "queued",
-          payload: this.toJson(event)
+          dedupeKey: envelope.message_id
         }
-      });
-
-      accepted += 1;
-
-      const publish = await this.nats.publishTelemetry({
-        ingestion_event_id: created.id,
-        tenant_id: tenantId,
-        source: parsed.data.source
-      });
-      if (publish.accepted) {
-        queued += 1;
-        await this.prisma.ingestionEvent.update({
-          where: { id: created.id },
-          data: { status: "published" }
-        });
       }
+    });
+    if (existingEvent) {
+      return {
+        accepted: 0,
+        duplicate: 1,
+        queued: 0,
+        source: envelope.source.source_type,
+        schemaVersion: envelope.schema_version,
+        messageType: envelope.message_type,
+        messageId: envelope.message_id
+      };
+    }
+
+    const canonicalExisting = await this.prisma.canonicalMessage.findUnique({
+      where: {
+        tenantId_messageId: {
+          tenantId,
+          messageId: envelope.message_id
+        }
+      }
+    });
+    if (canonicalExisting) {
+      return {
+        accepted: 0,
+        duplicate: 1,
+        queued: 0,
+        source: envelope.source.source_type,
+        schemaVersion: envelope.schema_version,
+        messageType: envelope.message_type,
+        messageId: envelope.message_id
+      };
+    }
+
+    let normalizedPayload: RobotStatePayloadInput | RobotEventPayloadInput | TaskStatusPayloadInput;
+    let severity: "info" | "warning" | "major" | "critical" | null = null;
+    let category: "navigation" | "traffic" | "battery" | "connectivity" | "hardware" | "safety" | "integration" | null = null;
+
+    if (envelope.message_type === "robot_state") {
+      const parsedPayload = parseCanonicalPayload("robot_state", envelope.payload);
+      if (!parsedPayload.success) {
+        throw new BadRequestException(parsedPayload.error.flatten());
+      }
+      normalizedPayload = parsedPayload.data;
+    } else if (envelope.message_type === "robot_event") {
+      const parsedPayload = parseCanonicalPayload("robot_event", envelope.payload);
+      if (!parsedPayload.success) {
+        throw new BadRequestException(parsedPayload.error.flatten());
+      }
+      normalizedPayload = parsedPayload.data;
+      severity = parsedPayload.data.severity;
+      category = parsedPayload.data.category;
+    } else {
+      const parsedPayload = parseCanonicalPayload("task_status", envelope.payload);
+      if (!parsedPayload.success) {
+        throw new BadRequestException(parsedPayload.error.flatten());
+      }
+      normalizedPayload = parsedPayload.data;
+    }
+
+    const canonicalMessage = await this.prisma.canonicalMessage.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        siteId: envelope.site_id,
+        messageId: envelope.message_id,
+        schemaVersion: envelope.schema_version,
+        messageType: envelope.message_type,
+        timestamp: new Date(envelope.timestamp),
+        sourceType: envelope.source.source_type,
+        sourceId: envelope.source.source_id,
+        vendor: envelope.source.vendor,
+        protocol: envelope.source.protocol,
+        entityType: envelope.entity.entity_type,
+        robotId: envelope.entity.robot_id,
+        severity,
+        category,
+        payload: this.toJson(normalizedPayload),
+        rawEnvelope: this.toJson(envelope)
+      }
+    });
+
+    const ingestionEvent = await this.prisma.ingestionEvent.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        canonicalMessageId: canonicalMessage.id,
+        source: `${envelope.source.source_type}:${envelope.source.source_id}`,
+        dedupeKey: envelope.message_id,
+        status: "queued",
+        payload: this.toJson(envelope)
+      }
+    });
+
+    const publish = await this.nats.publishTelemetry({
+      ingestion_event_id: ingestionEvent.id,
+      canonical_message_id: canonicalMessage.id,
+      tenant_id: tenantId,
+      message_type: envelope.message_type,
+      source: envelope.source.source_type
+    });
+
+    if (publish.accepted) {
+      await this.prisma.ingestionEvent.update({
+        where: { id: ingestionEvent.id },
+        data: { status: "published" }
+      });
     }
 
     await this.auditService.log(tenantId, {
       action: "telemetry.ingested",
       resourceType: "robot",
-      resourceId: "batch",
+      resourceId: envelope.entity.robot_id,
       diff: {
         before: null,
         after: {
-          source: parsed.data.source,
-          accepted,
-          duplicate,
-          queued
+          message_id: envelope.message_id,
+          schema_version: envelope.schema_version,
+          message_type: envelope.message_type,
+          source: envelope.source,
+          accepted: 1,
+          duplicate: 0,
+          queued: publish.accepted ? 1 : 0
         }
       },
       actorType: "user",
@@ -171,10 +259,13 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     });
 
     return {
-      accepted,
-      duplicate,
-      queued,
-      source: parsed.data.source
+      accepted: 1,
+      duplicate: 0,
+      queued: publish.accepted ? 1 : 0,
+      source: envelope.source.source_type,
+      schemaVersion: envelope.schema_version,
+      messageType: envelope.message_type,
+      messageId: envelope.message_id
     };
   }
 
@@ -1159,36 +1250,54 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processIngestionEvent(eventId: string) {
-    const event = await this.prisma.ingestionEvent.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.ingestionEvent.findUnique({
+      where: { id: eventId },
+      include: {
+        canonicalMessage: true
+      }
+    });
     if (!event || event.status === "processed") {
       return;
     }
 
     try {
-      const parsed = telemetryIngestEventSchema.safeParse(event.payload);
-      if (!parsed.success) {
-        throw new Error(`Invalid ingestion payload: ${parsed.error.issues.map((issue) => issue.message).join(", ")}`);
+      const parsedEnvelope = canonicalEnvelopeSchema.safeParse(event.payload);
+      if (!parsedEnvelope.success) {
+        throw new Error(`Invalid canonical envelope: ${parsedEnvelope.error.issues.map((issue) => issue.message).join(", ")}`);
       }
+      const envelope = parsedEnvelope.data;
 
-      const timestamp = new Date(parsed.data.timestamp);
-      const points: Array<{ id: string; tenantId: string; robotId: string; metric: string; value: number; timestamp: Date }> = [];
-      for (const [metric, value] of Object.entries(parsed.data.metrics)) {
-        points.push({
-          id: `${event.id}:${metric}`,
-          tenantId: event.tenantId,
-          robotId: parsed.data.robot_id,
-          metric,
-          value,
-          timestamp
-        });
-      }
-
-      for (const point of points) {
-        const existing = await this.prisma.telemetryPoint.findUnique({ where: { id: point.id } });
-        if (existing) {
-          continue;
+      const robot = await this.prisma.robot.findFirst({
+        where: {
+          id: envelope.entity.robot_id,
+          tenantId: event.tenantId
         }
-        await this.prisma.telemetryPoint.create({ data: point });
+      });
+      if (!robot) {
+        throw new Error("Robot not found for canonical message");
+      }
+      if (robot.siteId !== envelope.site_id) {
+        throw new Error("site_id mismatch for robot");
+      }
+
+      if (envelope.message_type === "robot_state") {
+        const payload = parseCanonicalPayload("robot_state", envelope.payload);
+        if (!payload.success) {
+          throw new Error(payload.error.issues.map((issue) => issue.message).join(", "));
+        }
+        await this.handleRobotStateMessage(event.tenantId, event.id, envelope, payload.data);
+      } else if (envelope.message_type === "robot_event") {
+        const payload = parseCanonicalPayload("robot_event", envelope.payload);
+        if (!payload.success) {
+          throw new Error(payload.error.issues.map((issue) => issue.message).join(", "));
+        }
+        await this.handleRobotEventMessage(event.tenantId, envelope, payload.data);
+      } else {
+        const payload = parseCanonicalPayload("task_status", envelope.payload);
+        if (!payload.success) {
+          throw new Error(payload.error.issues.map((issue) => issue.message).join(", "));
+        }
+        await this.handleTaskStatusMessage(event.tenantId, envelope, payload.data);
       }
 
       await this.prisma.ingestionEvent.update({
@@ -1198,13 +1307,6 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
           processedAt: new Date(),
           error: null
         }
-      });
-
-      this.emitLive(event.tenantId, "telemetry.live", {
-        type: "telemetry.ingested",
-        robotId: parsed.data.robot_id,
-        timestamp: parsed.data.timestamp,
-        metrics: parsed.data.metrics
       });
     } catch (error) {
       const message = String(error);
@@ -1225,6 +1327,226 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         }
       });
     }
+  }
+
+  private async handleRobotStateMessage(
+    tenantId: string,
+    ingestionEventId: string,
+    envelope: CanonicalEnvelopeInput,
+    payload: RobotStatePayloadInput
+  ) {
+    const robot = await this.prisma.robot.findFirst({
+      where: {
+        tenantId,
+        id: envelope.entity.robot_id
+      }
+    });
+    if (!robot) {
+      throw new Error("Robot not found for robot_state");
+    }
+
+    const updateData: Prisma.RobotUpdateInput = {
+      lastSeenAt: new Date(envelope.timestamp)
+    };
+
+    if (payload.status) {
+      updateData.status = payload.status;
+    }
+    if (payload.battery_percent !== undefined) {
+      updateData.batteryPercent = Math.round(payload.battery_percent);
+    }
+    if (payload.pose) {
+      updateData.x = payload.pose.x;
+      updateData.y = payload.pose.y;
+      updateData.headingDegrees = payload.pose.heading_degrees ?? robot.headingDegrees;
+      if (payload.pose.confidence !== undefined) {
+        updateData.confidence = payload.pose.confidence;
+      }
+      if (payload.pose.floorplan_id) {
+        updateData.floorplanId = payload.pose.floorplan_id;
+      }
+    }
+    if (payload.telemetry) {
+      if (payload.telemetry.cpu_percent !== undefined) {
+        updateData.cpuPercent = Math.round(payload.telemetry.cpu_percent);
+      }
+      if (payload.telemetry.memory_percent !== undefined) {
+        updateData.memoryPercent = Math.round(payload.telemetry.memory_percent);
+      }
+      if (payload.telemetry.temp_c !== undefined) {
+        updateData.tempC = Math.round(payload.telemetry.temp_c);
+      }
+      if (payload.telemetry.disk_percent !== undefined) {
+        updateData.diskPercent = Math.round(payload.telemetry.disk_percent);
+      }
+      if (payload.telemetry.network_rssi !== undefined) {
+        updateData.networkRssi = Math.round(payload.telemetry.network_rssi);
+      }
+    }
+    if (payload.metrics?.battery !== undefined && payload.battery_percent === undefined) {
+      updateData.batteryPercent = Math.round(payload.metrics.battery);
+    }
+    if (payload.metrics?.cpu_percent !== undefined && payload.telemetry?.cpu_percent === undefined) {
+      updateData.cpuPercent = Math.round(payload.metrics.cpu_percent);
+    }
+    if (payload.metrics?.temp_c !== undefined && payload.telemetry?.temp_c === undefined) {
+      updateData.tempC = Math.round(payload.metrics.temp_c);
+    }
+    if (payload.metrics?.disk_percent !== undefined && payload.telemetry?.disk_percent === undefined) {
+      updateData.diskPercent = Math.round(payload.metrics.disk_percent);
+    }
+    if (payload.metrics?.network_rssi !== undefined && payload.telemetry?.network_rssi === undefined) {
+      updateData.networkRssi = Math.round(payload.metrics.network_rssi);
+    }
+
+    await this.prisma.robot.update({
+      where: { id: robot.id },
+      data: updateData
+    });
+
+    if (payload.metrics) {
+      const pointTimestamp = new Date(envelope.timestamp);
+      for (const [metric, value] of Object.entries(payload.metrics)) {
+        const pointId = `${ingestionEventId}:${metric}`;
+        const exists = await this.prisma.telemetryPoint.findUnique({ where: { id: pointId } });
+        if (exists) {
+          continue;
+        }
+        await this.prisma.telemetryPoint.create({
+          data: {
+            id: pointId,
+            tenantId,
+            robotId: envelope.entity.robot_id,
+            metric,
+            value,
+            timestamp: pointTimestamp
+          }
+        });
+      }
+    }
+
+    this.emitLive(tenantId, "telemetry.live", {
+      type: "robot_state",
+      robotId: envelope.entity.robot_id,
+      timestamp: envelope.timestamp,
+      metrics: payload.metrics ?? {}
+    });
+  }
+
+  private async handleRobotEventMessage(
+    tenantId: string,
+    envelope: CanonicalEnvelopeInput,
+    payload: RobotEventPayloadInput
+  ) {
+    if (!payload.create_incident) {
+      return;
+    }
+
+    const incident = await this.prisma.incident.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        siteId: envelope.site_id,
+        robotId: envelope.entity.robot_id,
+        missionId: null,
+        severity: payload.severity,
+        category: payload.category,
+        status: "open",
+        title: payload.title,
+        description: payload.message ?? payload.title,
+        createdAt: new Date(payload.occurred_at ?? envelope.timestamp),
+        acknowledgedBy: null,
+        resolvedAt: null
+      }
+    });
+
+    await this.prisma.incidentEvent.create({
+      data: {
+        id: randomUUID(),
+        incidentId: incident.id,
+        timestamp: new Date(payload.occurred_at ?? envelope.timestamp),
+        type: "created",
+        message: payload.message ?? payload.title,
+        meta: this.toJson({
+          message_id: envelope.message_id,
+          event_type: payload.event_type,
+          ...payload.meta
+        })
+      }
+    });
+
+    this.emitLive(tenantId, "incidents.live", {
+      type: "robot_event",
+      incidentId: incident.id,
+      robotId: envelope.entity.robot_id,
+      severity: payload.severity,
+      category: payload.category,
+      title: payload.title,
+      timestamp: payload.occurred_at ?? envelope.timestamp
+    });
+  }
+
+  private async handleTaskStatusMessage(
+    tenantId: string,
+    envelope: CanonicalEnvelopeInput,
+    payload: TaskStatusPayloadInput
+  ) {
+    const mission = await this.prisma.mission.findFirst({
+      where: {
+        id: payload.task_id,
+        tenantId
+      }
+    });
+    if (!mission) {
+      throw new Error("Mission not found for task_status");
+    }
+    if (mission.siteId !== envelope.site_id) {
+      throw new Error("site_id mismatch for task_status");
+    }
+
+    const eventTimestamp = new Date(payload.updated_at ?? envelope.timestamp);
+    const update: Prisma.MissionUpdateInput = {
+      state: payload.state
+    };
+    if (!mission.startTime && payload.state === "running") {
+      update.startTime = eventTimestamp;
+    }
+    if (!mission.endTime && ["succeeded", "failed", "canceled"].includes(payload.state)) {
+      update.endTime = eventTimestamp;
+      const start = mission.startTime ?? mission.createdAt;
+      update.durationS = Math.max(0, Math.floor((eventTimestamp.getTime() - start.getTime()) / 1000));
+    }
+
+    await this.prisma.mission.update({
+      where: { id: mission.id },
+      data: update
+    });
+
+    await this.prisma.missionEvent.create({
+      data: {
+        id: randomUUID(),
+        missionId: mission.id,
+        robotId: envelope.entity.robot_id,
+        timestamp: eventTimestamp,
+        type: "state_change",
+        payload: this.toJson({
+          state: payload.state,
+          percent_complete: payload.percent_complete ?? null,
+          message: payload.message ?? null,
+          message_id: envelope.message_id,
+          ...(payload.meta ?? {})
+        })
+      }
+    });
+
+    this.emitLive(tenantId, "missions.live", {
+      type: "task_status",
+      missionId: mission.id,
+      robotId: envelope.entity.robot_id,
+      state: payload.state,
+      percentComplete: payload.percent_complete ?? null,
+      timestamp: payload.updated_at ?? envelope.timestamp
+    });
   }
 
   async refreshRollups() {

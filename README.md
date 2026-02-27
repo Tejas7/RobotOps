@@ -12,6 +12,12 @@ Robotics operations and orchestration dashboard for heterogeneous fleets.
 - Phase 2: Telemetry downsampling, robot path playback, saved views with role defaults, integrations test flows, audit diff rendering, and full `Analytics`/`Integrations`/`Settings` experience.
 - Phase 3: Timescale-ready telemetry model, NATS-backed ingestion path, fine-grained scope-based RBAC (with legacy aliases), cross-site analytics and export, alert rules/policies/escalation flow, and pipeline health/status surfaces.
 
+## Technical documentation
+- Technical source of truth: `documents/Technical Documents/`
+- Index and maintenance policy: `documents/Technical Documents/README.md`
+- Phase completion log: `documents/Technical Documents/phase_completion_log.md`
+- Requirement: when a phase is completed, update technical documents in `documents/Technical Documents/` in the same branch before sign-off.
+
 ## Prerequisites
 - Node.js 20+
 - npm 10+
@@ -86,6 +92,7 @@ Current seed data includes richer cross-page coverage:
 ```bash
 npm run typecheck
 npm run build
+npm run qa:v1:phase1
 npm run qa:phase1
 npm run qa:phase2
 npm run qa:phase3

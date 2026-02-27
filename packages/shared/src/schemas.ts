@@ -126,42 +126,170 @@ export const dashboardConfigPatchSchema = z
 
 const TELEMETRY_INGEST_METRICS = ["battery", "temp_c", "cpu_percent", "network_rssi", "disk_percent"] as const;
 
-export const telemetryIngestEventSchema = z
+export const canonicalMessageTypeSchema = z.enum(["robot_state", "robot_event", "task_status"]);
+export const canonicalSeveritySchema = z.enum(["info", "warning", "major", "critical"]);
+export const canonicalCategorySchema = z.enum([
+  "navigation",
+  "traffic",
+  "battery",
+  "connectivity",
+  "hardware",
+  "safety",
+  "integration"
+]);
+
+export const SUPPORTED_CANONICAL_SCHEMA_VERSIONS = [1] as const;
+
+export function isSupportedCanonicalSchemaVersion(version: number) {
+  return SUPPORTED_CANONICAL_SCHEMA_VERSIONS.includes(version as (typeof SUPPORTED_CANONICAL_SCHEMA_VERSIONS)[number]);
+}
+
+export const robotStatePayloadSchema = z
   .object({
-    event_id: z.string().min(1).optional(),
-    dedupe_key: z.string().min(1).optional(),
-    robot_id: z.string().min(1),
-    site_id: z.string().min(1).optional(),
-    timestamp: z.string().datetime(),
-    metrics: z.record(z.string(), z.number())
+    status: z.enum(["online", "offline", "degraded", "maintenance", "emergency_stop"]).optional(),
+    battery_percent: z.number().min(0).max(100).optional(),
+    pose: z
+      .object({
+        floorplan_id: z.string().min(1).optional(),
+        x: z.number(),
+        y: z.number(),
+        heading_degrees: z.number().optional().default(0),
+        confidence: z.number().min(0).max(1).optional()
+      })
+      .optional(),
+    telemetry: z
+      .object({
+        cpu_percent: z.number().min(0).max(100).optional(),
+        memory_percent: z.number().min(0).max(100).optional(),
+        temp_c: z.number().optional(),
+        disk_percent: z.number().min(0).max(100).optional(),
+        network_rssi: z.number().optional()
+      })
+      .optional(),
+    metrics: z.record(z.string(), z.number()).optional(),
+    task: z
+      .object({
+        task_id: z.string().min(1).optional(),
+        state: z.string().min(1).optional(),
+        percent_complete: z.number().min(0).max(100).optional()
+      })
+      .optional(),
+    meta: z.record(z.string(), z.unknown()).optional()
   })
   .superRefine((input, ctx) => {
-    const keys = Object.keys(input.metrics);
-    if (keys.length === 0) {
+    if (Object.keys(input).length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["metrics"],
-        message: "At least one telemetry metric is required"
+        path: [],
+        message: "robot_state payload cannot be empty"
+      });
+    }
+    if (input.metrics) {
+      const allowed = new Set<string>(TELEMETRY_INGEST_METRICS);
+      for (const key of Object.keys(input.metrics)) {
+        if (!allowed.has(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["metrics", key],
+            message: `Unsupported metric: ${key}`
+          });
+        }
+      }
+    }
+  });
+
+export const robotEventPayloadSchema = z.object({
+  event_id: z.string().min(1).optional(),
+  dedupe_key: z.string().min(1).optional(),
+  event_type: z.string().min(1),
+  severity: canonicalSeveritySchema,
+  category: canonicalCategorySchema,
+  title: z.string().min(1),
+  message: z.string().min(1).optional(),
+  create_incident: z.boolean().optional().default(true),
+  occurred_at: z.string().datetime().optional(),
+  meta: z.record(z.string(), z.unknown()).optional().default({})
+});
+
+export const taskStatusPayloadSchema = z.object({
+  task_id: z.string().min(1),
+  state: z.enum(["queued", "running", "blocked", "succeeded", "failed", "canceled"]),
+  percent_complete: z.number().min(0).max(100).optional(),
+  updated_at: z.string().datetime().optional(),
+  message: z.string().optional(),
+  meta: z.record(z.string(), z.unknown()).optional().default({})
+});
+
+const canonicalSourceSchema = z.object({
+  source_type: z.enum(["edge", "adapter", "simulator"]),
+  source_id: z.string().min(1),
+  vendor: z.string().min(1),
+  protocol: z.enum(["http", "websocket", "internal"])
+});
+
+const canonicalEntitySchema = z.object({
+  entity_type: z.literal("robot"),
+  robot_id: z.string().min(1)
+});
+
+export const canonicalEnvelopeSchema = z
+  .object({
+    message_id: z.string().uuid(),
+    schema_version: z.coerce.number().int().positive(),
+    tenant_id: z.string().min(1),
+    site_id: z.string().min(1),
+    message_type: canonicalMessageTypeSchema,
+    timestamp: z.string().datetime(),
+    source: canonicalSourceSchema,
+    entity: canonicalEntitySchema,
+    payload: z.unknown()
+  })
+  .superRefine((input, ctx) => {
+    if (!isSupportedCanonicalSchemaVersion(input.schema_version)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schema_version"],
+        message: `Unsupported schema_version: ${input.schema_version}`
       });
       return;
     }
 
-    const allowed = new Set<string>(TELEMETRY_INGEST_METRICS);
-    for (const key of keys) {
-      if (!allowed.has(key)) {
+    const parser =
+      input.message_type === "robot_state"
+        ? robotStatePayloadSchema
+        : input.message_type === "robot_event"
+          ? robotEventPayloadSchema
+          : taskStatusPayloadSchema;
+    const payloadParse = parser.safeParse(input.payload);
+    if (!payloadParse.success) {
+      for (const issue of payloadParse.error.issues) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ["metrics", key],
-          message: `Unsupported metric: ${key}`
+          path: ["payload", ...issue.path],
+          message: issue.message
         });
       }
     }
   });
 
-export const telemetryIngestSchema = z.object({
-  source: z.string().min(1).optional().default("api"),
-  events: z.array(telemetryIngestEventSchema).min(1).max(500)
-});
+type CanonicalPayloadByType = {
+  robot_state: z.infer<typeof robotStatePayloadSchema>;
+  robot_event: z.infer<typeof robotEventPayloadSchema>;
+  task_status: z.infer<typeof taskStatusPayloadSchema>;
+};
+
+export function parseCanonicalPayload<T extends z.infer<typeof canonicalMessageTypeSchema>>(
+  messageType: T,
+  payload: unknown
+): z.SafeParseReturnType<unknown, CanonicalPayloadByType[T]> {
+  const parser =
+    messageType === "robot_state"
+      ? robotStatePayloadSchema
+      : messageType === "robot_event"
+        ? robotEventPayloadSchema
+        : taskStatusPayloadSchema;
+  return parser.safeParse(payload) as z.SafeParseReturnType<unknown, CanonicalPayloadByType[T]>;
+}
 
 export const crossSiteAnalyticsQuerySchema = z.object({
   site_id: z.string().optional().default("all"),
@@ -254,8 +382,11 @@ export type IntegrationCreateInput = z.infer<typeof integrationCreateSchema>;
 export type IntegrationPatchInput = z.infer<typeof integrationPatchSchema>;
 export type DashboardConfigInput = z.infer<typeof dashboardConfigSchemaV1>;
 export type DashboardConfigPatchInput = z.infer<typeof dashboardConfigPatchSchema>;
-export type TelemetryIngestEventInput = z.infer<typeof telemetryIngestEventSchema>;
-export type TelemetryIngestInput = z.infer<typeof telemetryIngestSchema>;
+export type RobotStatePayloadInput = z.infer<typeof robotStatePayloadSchema>;
+export type RobotEventPayloadInput = z.infer<typeof robotEventPayloadSchema>;
+export type TaskStatusPayloadInput = z.infer<typeof taskStatusPayloadSchema>;
+export type CanonicalMessageTypeInput = z.infer<typeof canonicalMessageTypeSchema>;
+export type CanonicalEnvelopeInput = z.infer<typeof canonicalEnvelopeSchema>;
 export type CrossSiteAnalyticsQueryInput = z.infer<typeof crossSiteAnalyticsQuerySchema>;
 export type AlertPolicyInput = z.infer<typeof alertPolicySchema>;
 export type AlertPolicyPatchInput = z.infer<typeof alertPolicyPatchSchema>;

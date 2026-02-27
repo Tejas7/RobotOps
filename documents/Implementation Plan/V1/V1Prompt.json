@@ -1,0 +1,351 @@
+{
+  "codex_prompt": {
+    "project_name": "RobotOps",
+    "objective": "Extend the existing RobotOps implementation with six phases that harden ingestion, data contracts, state storage, mapping, dedupe ordering, adapter harness, and UI live update efficiency. The current system uses Socket.io for UI live updates and HTTPS POST ingest into an internal queue. Do not implement MQTT in these phases unless explicitly required by a future vendor integration.",
+    "current_state_context": {
+      "ui_live_updates": "Socket.io",
+      "ingestion": "HTTPS POST /ingest/telemetry into API then internal queue using NATS abstraction",
+      "canonical_envelope": "Exists for telemetry with source, events array, robot_id, timestamp, metrics, validation and dedupe before persistence",
+      "ui_broadcast_payloads": "Currently sends arrays of domain objects derived from database queries",
+      "first_real_integration_target": "Vendor fleet manager API using REST or vendor WebSocket"
+    },
+    "global_constraints": {
+      "do_not_copy_any_vendor_ui_or_brand": true,
+      "keep_ui_style_wealthsimple_inspired": true,
+      "keep_clean_room_implementation": true,
+      "no_mqtt_in_these_phases": true,
+      "no_breaking_changes_without_migrations": true
+    },
+    "phases": [
+      {
+        "phase": 1,
+        "name": "Lock canonical envelope into three message types",
+        "goal": "Formalize the internal ingestion contract into robot_state, robot_event, and task_status. Ensure every adapter and ingest path emits exactly one of these types and that validation is strict.",
+        "deliverables": [
+          "Add message_type to the canonical envelope and validate it",
+          "Define schemas for robot_state payload, robot_event payload, task_status payload",
+          "Split existing events array semantics into robot_event only. Robot_state must not be bundled as events.",
+          "Update ingest endpoint and queue consumers to route by message_type",
+          "Add versioning rules with schema_version and compatibility checks"
+        ],
+        "api_changes": {
+          "endpoint": "POST /ingest/telemetry",
+          "request_body_contract": {
+            "message_id": "uuid",
+            "schema_version": 1,
+            "tenant_id": "string",
+            "site_id": "string",
+            "message_type": "robot_state or robot_event or task_status",
+            "timestamp": "RFC3339",
+            "source": {
+              "source_type": "edge or adapter or simulator",
+              "source_id": "string",
+              "vendor": "string",
+              "protocol": "http or websocket or internal"
+            },
+            "entity": {
+              "entity_type": "robot",
+              "robot_id": "string"
+            },
+            "payload": "object matching message_type schema"
+          }
+        },
+        "data_model_changes": [
+          "Add canonical_message table for raw validated envelopes or store raw in object storage with references",
+          "Add enums for message_type and severity and category"
+        ],
+        "acceptance_criteria": [
+          "Ingest rejects unknown message_type",
+          "Ingest rejects payloads that do not match message_type schema",
+          "Queue consumer routes messages correctly by message_type",
+          "Robot_state updates do not create incidents unless a separate robot_event is emitted"
+        ]
+      },
+      {
+        "phase": 2,
+        "name": "Implement last known state table as first class read model",
+        "goal": "Create a fast, stable read model for Fleet and Facility views. Stop relying on aggregating robot state from many tables per refresh.",
+        "deliverables": [
+          "Create robot_last_state table keyed by tenant_id, site_id, robot_id",
+          "Upsert logic on ingest for robot_state only",
+          "Expose query endpoint GET /robots/last_state with filters for site, status, vendor, tag",
+          "Update Fleet list and Facility map to read from robot_last_state",
+          "Add robot_offline computation using last_seen_at and configured timeout"
+        ],
+        "data_model_changes": {
+          "robot_last_state": {
+            "primary_key": "tenant_id, site_id, robot_id",
+            "columns": [
+              "robot_id",
+              "tenant_id",
+              "site_id",
+              "name",
+              "vendor",
+              "model",
+              "serial",
+              "tags",
+              "status",
+              "battery_percent",
+              "last_seen_at",
+              "floorplan_id",
+              "x",
+              "y",
+              "heading_degrees",
+              "confidence",
+              "health_score",
+              "cpu_percent",
+              "memory_percent",
+              "temp_c",
+              "disk_percent",
+              "network_rssi",
+              "current_task_id",
+              "current_task_state",
+              "current_task_percent_complete",
+              "updated_at"
+            ],
+            "indexes": [
+              "tenant_id site_id status",
+              "tenant_id site_id vendor",
+              "tenant_id site_id floorplan_id",
+              "tenant_id site_id updated_at"
+            ]
+          },
+          "config": {
+            "site_settings": [
+              "robot_offline_after_seconds default 15",
+              "robot_state_publish_period_seconds default 2"
+            ]
+          }
+        },
+        "acceptance_criteria": [
+          "Fleet page reads only from robot_last_state for live state",
+          "Facility page reads only from robot_last_state for live pose",
+          "Robot becomes offline after timeout if no robot_state updates arrive",
+          "Reads remain fast with large robot counts by using proper indexes"
+        ]
+      },
+      {
+        "phase": 3,
+        "name": "Add site mapping and coordinate transforms",
+        "goal": "Handle vendor map frames and coordinate systems cleanly by introducing a mapping layer to RobotOps floorplans and a deterministic transform pipeline.",
+        "deliverables": [
+          "Create vendor_site_map entity linking vendor map id or name to RobotOps floorplan_id",
+          "Implement transform pipeline that supports scale, rotation, and translation",
+          "Apply transforms during ingest so robot_last_state always uses RobotOps coordinate space",
+          "Add validation and test utilities for transforms",
+          "Create admin UI in Settings for managing map mappings and transforms"
+        ],
+        "data_model_changes": {
+          "vendor_site_map": {
+            "columns": [
+              "id",
+              "tenant_id",
+              "site_id",
+              "vendor",
+              "vendor_map_id",
+              "vendor_map_name",
+              "robotops_floorplan_id",
+              "scale",
+              "rotation_degrees",
+              "translate_x",
+              "translate_y",
+              "created_at",
+              "updated_at"
+            ],
+            "indexes": [
+              "tenant_id site_id vendor vendor_map_id",
+              "tenant_id site_id vendor vendor_map_name"
+            ]
+          }
+        },
+        "transform_rules": [
+          "input point in vendor coordinates becomes output point in RobotOps floorplan coordinates",
+          "apply scale first, then rotation, then translation",
+          "rotation is around origin of vendor frame unless specified otherwise",
+          "store all transform parameters per vendor map mapping"
+        ],
+        "acceptance_criteria": [
+          "Robot_state ingest with vendor map id is transformed into RobotOps floorplan coordinates",
+          "Facility map displays robots correctly on the chosen floorplan",
+          "Transform tests cover scale only, rotation only, translation only, and combined transforms"
+        ]
+      },
+      {
+        "phase": 4,
+        "name": "Harden dedupe and ordering rules",
+        "goal": "Prevent duplicates and reduce jitter by defining deterministic ordering, late data handling, and dedupe windows for each message type.",
+        "deliverables": [
+          "Define dedupe keys and windows for robot_event and task_status",
+          "Define ordering rules per robot for robot_state with out of order dropping",
+          "Add message sequence support where available",
+          "Add storage for last processed sequence and timestamp per robot and per task",
+          "Ensure incident list and mission timeline do not duplicate entries"
+        ],
+        "rules": {
+          "robot_state": {
+            "dedupe": "last write wins by timestamp, drop if older than last_state_timestamp minus allowed_lateness_seconds",
+            "allowed_lateness_seconds": 5,
+            "ordering": "prefer sequence if provided, else timestamp",
+            "persistence": "upsert into robot_last_state"
+          },
+          "robot_event": {
+            "dedupe": "dedupe_key required, unique on tenant_id site_id robot_id dedupe_key within window",
+            "window_seconds": 1800,
+            "persistence": "append only event store",
+            "idempotency": "message_id unique"
+          },
+          "task_status": {
+            "dedupe": "unique on tenant_id site_id task_id state updated_at within window",
+            "window_seconds": 86400,
+            "ordering": "updated_at then sequence if provided",
+            "persistence": "append only task status store and also update task_last_status read model"
+          }
+        },
+        "acceptance_criteria": [
+          "Duplicate robot_event payloads do not create duplicate incidents",
+          "Out of order robot_state updates do not move robot backwards in time in the UI",
+          "Task timeline does not show duplicate state transitions",
+          "All message types are idempotent using message_id and dedupe rules"
+        ]
+      },
+      {
+        "phase": 5,
+        "name": "Adapter interface plus replay and recording harness",
+        "goal": "Create a robust integration development workflow by adding adapter contracts, raw payload recording, and deterministic replay through the same code path into ingest.",
+        "deliverables": [
+          "Define adapter interface for polling adapters and streaming adapters",
+          "Implement recorder to persist raw vendor payloads to disk or object storage with metadata",
+          "Implement replayer that replays recorded payloads through adapter to produce canonical envelopes",
+          "Add CLI commands to record, replay, and validate streams",
+          "Add integration test suite that replays canned streams end to end"
+        ],
+        "adapter_contracts": {
+          "polling_adapter": {
+            "methods": [
+              "initialize(config)",
+              "poll() returns list of canonical envelopes",
+              "health() returns adapter health summary"
+            ]
+          },
+          "streaming_adapter": {
+            "methods": [
+              "initialize(config)",
+              "connect()",
+              "on_message(raw_payload) returns zero or more canonical envelopes",
+              "disconnect()",
+              "health()"
+            ]
+          }
+        },
+        "replay_harness": {
+          "record_format": {
+            "metadata": [
+              "vendor",
+              "site_id",
+              "start_time",
+              "end_time",
+              "source_endpoint",
+              "capture_version"
+            ],
+            "entries": [
+              "timestamp",
+              "raw_payload",
+              "raw_headers optional",
+              "raw_path optional"
+            ]
+          },
+          "replay_controls": [
+            "replay_speed_multiplier",
+            "time_window_filter",
+            "deterministic_ordering"
+          ]
+        },
+        "acceptance_criteria": [
+          "You can record vendor payloads and replay them to produce identical canonical envelopes",
+          "Replay can run in CI with deterministic results",
+          "Adapter health endpoint reports last success and last error"
+        ]
+      },
+      {
+        "phase": 6,
+        "name": "Optimize Socket.io live updates using diffs and cursors",
+        "goal": "Reduce bandwidth and server load by moving from broadcasting full arrays to broadcasting deltas based on cursors and changed entities since a checkpoint time.",
+        "deliverables": [
+          "Add cursor based subscription protocol for clients",
+          "Emit robot_last_state deltas as robots change, not full robot arrays",
+          "Emit incident and mission changes as event driven updates",
+          "Add server side coalescing to batch rapid state updates",
+          "Update client to reconcile updates into local state using ids"
+        ],
+        "socket_protocol": {
+          "subscribe": {
+            "event": "subscribe",
+            "payload": {
+              "tenant_id": "string",
+              "site_id": "string",
+              "streams": [
+                "robot_last_state",
+                "incidents",
+                "missions"
+              ],
+              "cursor": {
+                "robot_last_state": "timestamp or opaque cursor",
+                "incidents": "timestamp or opaque cursor",
+                "missions": "timestamp or opaque cursor"
+              }
+            }
+          },
+          "server_push": {
+            "event": "delta",
+            "payload": {
+              "stream": "robot_last_state or incidents or missions",
+              "cursor": "new cursor",
+              "upserts": "array of changed entities",
+              "deletes": "array of ids"
+            }
+          }
+        },
+        "performance_targets": [
+          "Avoid broadcasting full robot arrays every tick",
+          "Support thousands of robots with stable CPU and memory",
+          "Keep UI responsive with reconciliation on client"
+        ],
+        "acceptance_criteria": [
+          "Client receives only deltas after initial load",
+          "Fleet page updates smoothly without full refresh payloads",
+          "Bandwidth drops significantly compared to full array broadcasts",
+          "Server batches rapid updates without losing correctness"
+        ]
+      }
+    ],
+    "implementation_order": {
+      "required_sequence": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "notes": [
+        "Phase 1 to 4 create stable ingestion semantics for any vendor integration",
+        "Phase 5 makes integration development safe and repeatable",
+        "Phase 6 keeps UI and infrastructure cost sane as you scale"
+      ]
+    },
+    "definition_of_done": {
+      "all_phases_complete": true,
+      "no_regressions": [
+        "Existing pages still function with dummy data",
+        "RBAC and tenant isolation remain enforced",
+        "Audit logging is not weakened"
+      ],
+      "ready_for_first_vendor_integration": {
+        "adapter_scaffold_ready": true,
+        "replay_harness_ready": true,
+        "canonical_contract_stable": true,
+        "facility_mapping_ready": true
+      }
+    }
+  }
+}

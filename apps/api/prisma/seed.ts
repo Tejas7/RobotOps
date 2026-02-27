@@ -13,6 +13,7 @@ async function main() {
   await prisma.siteAnalyticsRollupHourly.deleteMany();
   await prisma.telemetryDeadLetter.deleteMany();
   await prisma.ingestionEvent.deleteMany();
+  await prisma.canonicalMessage.deleteMany();
   await prisma.copilotMessage.deleteMany();
   await prisma.copilotThread.deleteMany();
   await prisma.roleDashboardDefault.deleteMany();
@@ -2287,18 +2288,243 @@ async function main() {
     ]
   });
 
+  await prisma.canonicalMessage.createMany({
+    data: [
+      {
+        id: "cmsg1",
+        tenantId: "t1",
+        siteId: "s1",
+        messageId: "11111111-1111-4111-8111-111111111111",
+        schemaVersion: 1,
+        messageType: "robot_state",
+        timestamp: new Date("2026-02-26T23:15:00Z"),
+        sourceType: "edge",
+        sourceId: "edge-west-1",
+        vendor: "vendor_acme",
+        protocol: "http",
+        entityType: "robot",
+        robotId: "r1",
+        severity: null,
+        category: null,
+        payload: {
+          status: "online",
+          battery_percent: 82,
+          metrics: {
+            battery: 82,
+            temp_c: 37.2,
+            cpu_percent: 44,
+            network_rssi: -58,
+            disk_percent: 61
+          },
+          pose: {
+            floorplan_id: "f1",
+            x: 42.1,
+            y: 24.7,
+            heading_degrees: 95,
+            confidence: 0.98
+          }
+        },
+        rawEnvelope: {
+          message_id: "11111111-1111-4111-8111-111111111111",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:15:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-west-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r1"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 82,
+            metrics: {
+              battery: 82,
+              temp_c: 37.2,
+              cpu_percent: 44,
+              network_rssi: -58,
+              disk_percent: 61
+            },
+            pose: {
+              floorplan_id: "f1",
+              x: 42.1,
+              y: 24.7,
+              heading_degrees: 95,
+              confidence: 0.98
+            }
+          }
+        },
+        createdAt: new Date("2026-02-26T23:15:01Z")
+      },
+      {
+        id: "cmsg2",
+        tenantId: "t1",
+        siteId: "s1",
+        messageId: "22222222-2222-4222-8222-222222222222",
+        schemaVersion: 1,
+        messageType: "robot_event",
+        timestamp: new Date("2026-02-26T23:16:00Z"),
+        sourceType: "adapter",
+        sourceId: "vendor-adapter-1",
+        vendor: "vendor_acme",
+        protocol: "internal",
+        entityType: "robot",
+        robotId: "r2",
+        severity: "warning",
+        category: "connectivity",
+        payload: {
+          event_type: "connectivity_drop",
+          severity: "warning",
+          category: "connectivity",
+          title: "Packet loss detected",
+          message: "Robot lost vendor heartbeat for 6 seconds",
+          create_incident: true,
+          occurred_at: "2026-02-26T23:16:00Z",
+          meta: {
+            packet_loss_percent: 42
+          }
+        },
+        rawEnvelope: {
+          message_id: "22222222-2222-4222-8222-222222222222",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_event",
+          timestamp: "2026-02-26T23:16:00Z",
+          source: {
+            source_type: "adapter",
+            source_id: "vendor-adapter-1",
+            vendor: "vendor_acme",
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r2"
+          },
+          payload: {
+            event_type: "connectivity_drop",
+            severity: "warning",
+            category: "connectivity",
+            title: "Packet loss detected",
+            message: "Robot lost vendor heartbeat for 6 seconds",
+            create_incident: true,
+            occurred_at: "2026-02-26T23:16:00Z",
+            meta: {
+              packet_loss_percent: 42
+            }
+          }
+        },
+        createdAt: new Date("2026-02-26T23:16:01Z")
+      },
+      {
+        id: "cmsg3",
+        tenantId: "t1",
+        siteId: "s1",
+        messageId: "33333333-3333-4333-8333-333333333333",
+        schemaVersion: 1,
+        messageType: "task_status",
+        timestamp: new Date("2026-02-26T23:17:00Z"),
+        sourceType: "simulator",
+        sourceId: "sim-run-17",
+        vendor: "robotops_sim",
+        protocol: "internal",
+        entityType: "robot",
+        robotId: "r3",
+        severity: null,
+        category: null,
+        payload: {
+          task_id: "m2",
+          state: "running",
+          percent_complete: 55,
+          updated_at: "2026-02-26T23:17:00Z",
+          message: "Entered waypoint corridor",
+          meta: {
+            waypoint_index: 4
+          }
+        },
+        rawEnvelope: {
+          message_id: "33333333-3333-4333-8333-333333333333",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "task_status",
+          timestamp: "2026-02-26T23:17:00Z",
+          source: {
+            source_type: "simulator",
+            source_id: "sim-run-17",
+            vendor: "robotops_sim",
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r3"
+          },
+          payload: {
+            task_id: "m2",
+            state: "running",
+            percent_complete: 55,
+            updated_at: "2026-02-26T23:17:00Z",
+            message: "Entered waypoint corridor",
+            meta: {
+              waypoint_index: 4
+            }
+          }
+        },
+        createdAt: new Date("2026-02-26T23:17:01Z")
+      }
+    ]
+  });
+
   await prisma.ingestionEvent.createMany({
     data: [
       {
         id: "ievt1",
         tenantId: "t1",
-        source: "seed",
-        dedupeKey: "seed:r1:2026-02-26T23:15:00Z:battery",
+        canonicalMessageId: "cmsg1",
+        source: "edge:edge-west-1",
+        dedupeKey: "11111111-1111-4111-8111-111111111111",
         status: "processed",
         payload: {
-          robot_id: "r1",
+          message_id: "11111111-1111-4111-8111-111111111111",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
           timestamp: "2026-02-26T23:15:00Z",
-          metrics: { battery: 82 }
+          source: {
+            source_type: "edge",
+            source_id: "edge-west-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r1"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 82,
+            metrics: {
+              battery: 82,
+              temp_c: 37.2,
+              cpu_percent: 44,
+              network_rssi: -58,
+              disk_percent: 61
+            },
+            pose: {
+              floorplan_id: "f1",
+              x: 42.1,
+              y: 24.7,
+              heading_degrees: 95,
+              confidence: 0.98
+            }
+          }
         },
         error: null,
         createdAt: new Date("2026-02-26T23:15:01Z"),
@@ -2307,16 +2533,100 @@ async function main() {
       {
         id: "ievt2",
         tenantId: "t1",
+        canonicalMessageId: "cmsg2",
+        source: "adapter:vendor-adapter-1",
+        dedupeKey: "22222222-2222-4222-8222-222222222222",
+        status: "processed",
+        payload: {
+          message_id: "22222222-2222-4222-8222-222222222222",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_event",
+          timestamp: "2026-02-26T23:16:00Z",
+          source: {
+            source_type: "adapter",
+            source_id: "vendor-adapter-1",
+            vendor: "vendor_acme",
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r2"
+          },
+          payload: {
+            event_type: "connectivity_drop",
+            severity: "warning",
+            category: "connectivity",
+            title: "Packet loss detected",
+            message: "Robot lost vendor heartbeat for 6 seconds",
+            create_incident: true,
+            occurred_at: "2026-02-26T23:16:00Z",
+            meta: {
+              packet_loss_percent: 42
+            }
+          }
+        },
+        error: null,
+        createdAt: new Date("2026-02-26T23:16:01Z"),
+        processedAt: new Date("2026-02-26T23:16:03Z")
+      },
+      {
+        id: "ievt3",
+        tenantId: "t1",
+        canonicalMessageId: "cmsg3",
+        source: "simulator:sim-run-17",
+        dedupeKey: "33333333-3333-4333-8333-333333333333",
+        status: "processed",
+        payload: {
+          message_id: "33333333-3333-4333-8333-333333333333",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "task_status",
+          timestamp: "2026-02-26T23:17:00Z",
+          source: {
+            source_type: "simulator",
+            source_id: "sim-run-17",
+            vendor: "robotops_sim",
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r3"
+          },
+          payload: {
+            task_id: "m2",
+            state: "running",
+            percent_complete: 55,
+            updated_at: "2026-02-26T23:17:00Z",
+            message: "Entered waypoint corridor",
+            meta: {
+              waypoint_index: 4
+            }
+          }
+        },
+        error: null,
+        createdAt: new Date("2026-02-26T23:17:01Z"),
+        processedAt: new Date("2026-02-26T23:17:02Z")
+      },
+      {
+        id: "ievt4",
+        tenantId: "t1",
+        canonicalMessageId: null,
         source: "seed",
-        dedupeKey: "seed:r2:2026-02-26T23:16:00Z:temp_c",
+        dedupeKey: "invalid-envelope-1",
         status: "failed",
         payload: {
-          robot_id: "r2",
-          timestamp: "bad-timestamp",
-          metrics: { temp_c: 91 }
+          tenant_id: "t1",
+          site_id: "s1",
+          schema_version: 999,
+          payload: {
+            bad: true
+          }
         },
-        error: "Invalid ingestion payload",
-        createdAt: new Date("2026-02-26T23:16:01Z"),
+        error: "Invalid canonical envelope",
+        createdAt: new Date("2026-02-26T23:18:01Z"),
         processedAt: null
       }
     ]
@@ -2329,11 +2639,14 @@ async function main() {
         tenantId: "t1",
         source: "seed",
         payload: {
-          robot_id: "r2",
-          timestamp: "bad-timestamp",
-          metrics: { temp_c: 91 }
+          tenant_id: "t1",
+          site_id: "s1",
+          schema_version: 999,
+          payload: {
+            bad: true
+          }
         },
-        error: "Invalid ingestion payload",
+        error: "Invalid canonical envelope",
         createdAt: new Date("2026-02-26T23:16:03Z")
       }
     ]
