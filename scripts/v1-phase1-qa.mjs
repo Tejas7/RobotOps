@@ -204,6 +204,7 @@ async function run() {
       message_id: crypto.randomUUID(),
       message_type: "robot_event",
       payload: {
+        dedupe_key: `v1p1-${Date.now()}-connectivity-drop`,
         event_type: "connectivity_drop",
         severity: "warning",
         category: "connectivity",

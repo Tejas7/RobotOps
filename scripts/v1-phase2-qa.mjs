@@ -5,7 +5,7 @@ const API_URL = process.env.ROBOTOPS_API_URL ?? "http://localhost:4000/api";
 const JWT_SECRET = process.env.JWT_SECRET ?? "robotops-dev-secret";
 const TENANT_ID = "t1";
 const SITE_ID = "s1";
-const ROBOT_ID = "r1";
+const ROBOT_ID = "r6";
 const MISSION_ID = "m2";
 
 function assert(condition, message) {
@@ -249,6 +249,7 @@ async function run() {
       const robotEvent = baseEnvelope({
         message_type: "robot_event",
         payload: {
+          dedupe_key: `v1p2-${Date.now()}-read-model-guard`,
           event_type: "qa_read_model_guard",
           severity: "warning",
           category: "connectivity",

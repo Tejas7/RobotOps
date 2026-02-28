@@ -5,7 +5,10 @@ import {
   DEPRECATED_PERMISSIONS,
   PERMISSIONS,
   PERMISSION_ALIASES,
+  ROBOT_EVENT_DEDUPE_WINDOW_SECONDS,
+  ROBOT_STATE_ALLOWED_LATENESS_SECONDS,
   ROLES,
+  TASK_STATUS_DEDUPE_WINDOW_SECONDS,
   alertPolicyPatchSchema,
   alertPolicySchema,
   alertRuleCreateSchema,
@@ -19,9 +22,12 @@ import {
   transformVendorPosePoint,
   permissionsForRole,
   roleScopeOverridePatchSchema,
+  type DedupeWindowDecision,
   type CanonicalEnvelopeInput,
+  type RobotStateOrderingDecision,
   type RobotEventPayloadInput,
   type RobotStatePayloadInput,
+  type TaskStatusOrderingDecision,
   type TaskStatusPayloadInput,
   type Role
 } from "@robotops/shared";
@@ -57,6 +63,11 @@ interface EffectiveRobotState {
   status: string;
   reportedStatus: string;
   isOfflineComputed: boolean;
+}
+
+interface IngestionHandlerResult {
+  applied: boolean;
+  reason?: string;
 }
 
 const SEVERITY_ORDER: Record<string, number> = {
@@ -1225,6 +1236,14 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processIngestionTick() {
+    await this.prisma.messageDedupeWindow.deleteMany({
+      where: {
+        expiresAt: {
+          lt: new Date()
+        }
+      }
+    });
+
     const subject = this.nats.getTelemetrySubject();
     const fromBus = this.nats.pull(subject, 200);
 
@@ -1343,7 +1362,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     ingestionEventId: string,
     envelope: CanonicalEnvelopeInput,
     payload: RobotStatePayloadInput
-  ) {
+  ): Promise<IngestionHandlerResult> {
     const robot = await this.prisma.robot.findFirst({
       where: {
         tenantId,
@@ -1364,6 +1383,33 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         }
       }
     });
+    const orderingDecision = this.evaluateRobotStateOrdering(
+      payload.sequence ?? null,
+      seenAt,
+      existingLastState?.lastStateSequence ?? null,
+      existingLastState?.lastStateTimestamp ?? existingLastState?.lastSeenAt ?? robot.lastSeenAt
+    );
+    if (!orderingDecision.accepted) {
+      await this.logIngestionDrop(tenantId, {
+        action: "telemetry.robot_state.dropped",
+        resourceId: envelope.entity.robot_id,
+        messageId: envelope.message_id,
+        reason: orderingDecision.reason,
+        messageType: envelope.message_type,
+        siteId: envelope.site_id,
+        metadata: {
+          candidate_timestamp: seenAt.toISOString(),
+          candidate_sequence: payload.sequence ?? null,
+          last_timestamp:
+            (existingLastState?.lastStateTimestamp ?? existingLastState?.lastSeenAt ?? robot.lastSeenAt).toISOString(),
+          last_sequence: existingLastState?.lastStateSequence ?? null
+        }
+      });
+      return {
+        applied: false,
+        reason: orderingDecision.reason
+      };
+    }
 
     const status = payload.status ?? existingLastState?.status ?? robot.status;
     const batteryPercent =
@@ -1485,7 +1531,10 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         networkRssi,
         currentTaskId,
         currentTaskState,
-        currentTaskPercentComplete
+        currentTaskPercentComplete,
+        lastStateTimestamp: seenAt,
+        lastStateSequence: payload.sequence ?? existingLastState?.lastStateSequence ?? null,
+        lastStateMessageId: envelope.message_id
       },
       create: {
         tenantId,
@@ -1512,7 +1561,10 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         networkRssi,
         currentTaskId,
         currentTaskState,
-        currentTaskPercentComplete
+        currentTaskPercentComplete,
+        lastStateTimestamp: seenAt,
+        lastStateSequence: payload.sequence ?? null,
+        lastStateMessageId: envelope.message_id
       }
     });
 
@@ -1543,15 +1595,47 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       timestamp: envelope.timestamp,
       metrics: payload.metrics ?? {}
     });
+
+    return { applied: true };
   }
 
   private async handleRobotEventMessage(
     tenantId: string,
     envelope: CanonicalEnvelopeInput,
     payload: RobotEventPayloadInput
-  ) {
+  ): Promise<IngestionHandlerResult> {
+    const eventTimestamp = new Date(payload.occurred_at ?? envelope.timestamp);
+    const dedupeDecision = await this.registerDedupeWindow(
+      tenantId,
+      envelope.site_id,
+      "robot_event",
+      envelope.entity.robot_id,
+      payload.dedupe_key,
+      eventTimestamp,
+      envelope.message_id,
+      ROBOT_EVENT_DEDUPE_WINDOW_SECONDS
+    );
+    if (dedupeDecision.duplicate) {
+      await this.logIngestionDrop(tenantId, {
+        action: "telemetry.robot_event.dropped",
+        resourceId: envelope.entity.robot_id,
+        messageId: envelope.message_id,
+        reason: dedupeDecision.reason,
+        messageType: envelope.message_type,
+        siteId: envelope.site_id,
+        metadata: {
+          dedupe_key: payload.dedupe_key,
+          event_timestamp: eventTimestamp.toISOString()
+        }
+      });
+      return {
+        applied: false,
+        reason: dedupeDecision.reason
+      };
+    }
+
     if (!payload.create_incident) {
-      return;
+      return { applied: true };
     }
 
     const incident = await this.prisma.incident.create({
@@ -1566,7 +1650,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         status: "open",
         title: payload.title,
         description: payload.message ?? payload.title,
-        createdAt: new Date(payload.occurred_at ?? envelope.timestamp),
+        createdAt: eventTimestamp,
         acknowledgedBy: null,
         resolvedAt: null
       }
@@ -1576,11 +1660,13 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       data: {
         id: randomUUID(),
         incidentId: incident.id,
-        timestamp: new Date(payload.occurred_at ?? envelope.timestamp),
+        timestamp: eventTimestamp,
         type: "created",
         message: payload.message ?? payload.title,
         meta: this.toJson({
           message_id: envelope.message_id,
+          dedupe_key: payload.dedupe_key,
+          sequence: payload.sequence ?? null,
           event_type: payload.event_type,
           ...payload.meta
         })
@@ -1596,13 +1682,15 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       title: payload.title,
       timestamp: payload.occurred_at ?? envelope.timestamp
     });
+
+    return { applied: true };
   }
 
   private async handleTaskStatusMessage(
     tenantId: string,
     envelope: CanonicalEnvelopeInput,
     payload: TaskStatusPayloadInput
-  ) {
+  ): Promise<IngestionHandlerResult> {
     const mission = await this.prisma.mission.findFirst({
       where: {
         id: payload.task_id,
@@ -1617,6 +1705,74 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     }
 
     const eventTimestamp = new Date(payload.updated_at ?? envelope.timestamp);
+    const taskDedupeKey = `${payload.task_id}:${payload.state}:${eventTimestamp.toISOString()}`;
+    const dedupeDecision = await this.registerDedupeWindow(
+      tenantId,
+      envelope.site_id,
+      "task_status",
+      payload.task_id,
+      taskDedupeKey,
+      eventTimestamp,
+      envelope.message_id,
+      TASK_STATUS_DEDUPE_WINDOW_SECONDS
+    );
+    if (dedupeDecision.duplicate) {
+      await this.logIngestionDrop(tenantId, {
+        action: "telemetry.task_status.dropped",
+        resourceId: payload.task_id,
+        messageId: envelope.message_id,
+        reason: dedupeDecision.reason,
+        messageType: envelope.message_type,
+        siteId: envelope.site_id,
+        metadata: {
+          dedupe_key: taskDedupeKey,
+          event_timestamp: eventTimestamp.toISOString(),
+          state: payload.state
+        }
+      });
+      return {
+        applied: false,
+        reason: dedupeDecision.reason
+      };
+    }
+
+    const taskLastStatus = await this.prisma.taskLastStatus.findUnique({
+      where: {
+        tenantId_siteId_taskId: {
+          tenantId,
+          siteId: envelope.site_id,
+          taskId: payload.task_id
+        }
+      }
+    });
+    const orderingDecision = this.evaluateTaskStatusOrdering(
+      payload.sequence ?? null,
+      eventTimestamp,
+      taskLastStatus?.lastSequence ?? null,
+      taskLastStatus?.updatedAtLogical ?? null
+    );
+    if (!orderingDecision.accepted) {
+      await this.logIngestionDrop(tenantId, {
+        action: "telemetry.task_status.dropped",
+        resourceId: payload.task_id,
+        messageId: envelope.message_id,
+        reason: orderingDecision.reason,
+        messageType: envelope.message_type,
+        siteId: envelope.site_id,
+        metadata: {
+          state: payload.state,
+          candidate_timestamp: eventTimestamp.toISOString(),
+          candidate_sequence: payload.sequence ?? null,
+          last_timestamp: taskLastStatus?.updatedAtLogical?.toISOString() ?? null,
+          last_sequence: taskLastStatus?.lastSequence ?? null
+        }
+      });
+      return {
+        applied: false,
+        reason: orderingDecision.reason
+      };
+    }
+
     const update: Prisma.MissionUpdateInput = {
       state: payload.state
     };
@@ -1646,8 +1802,38 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
           percent_complete: payload.percent_complete ?? null,
           message: payload.message ?? null,
           message_id: envelope.message_id,
+          sequence: payload.sequence ?? null,
           ...(payload.meta ?? {})
         })
+      }
+    });
+
+    await this.prisma.taskLastStatus.upsert({
+      where: {
+        tenantId_siteId_taskId: {
+          tenantId,
+          siteId: envelope.site_id,
+          taskId: payload.task_id
+        }
+      },
+      update: {
+        state: payload.state,
+        percentComplete: payload.percent_complete !== undefined ? Math.round(payload.percent_complete) : null,
+        updatedAtLogical: eventTimestamp,
+        lastSequence: payload.sequence ?? taskLastStatus?.lastSequence ?? null,
+        lastMessageId: envelope.message_id,
+        message: payload.message ?? null
+      },
+      create: {
+        tenantId,
+        siteId: envelope.site_id,
+        taskId: payload.task_id,
+        state: payload.state,
+        percentComplete: payload.percent_complete !== undefined ? Math.round(payload.percent_complete) : null,
+        updatedAtLogical: eventTimestamp,
+        lastSequence: payload.sequence ?? null,
+        lastMessageId: envelope.message_id,
+        message: payload.message ?? null
       }
     });
 
@@ -1658,6 +1844,165 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       state: payload.state,
       percentComplete: payload.percent_complete ?? null,
       timestamp: payload.updated_at ?? envelope.timestamp
+    });
+
+    return { applied: true };
+  }
+
+  private evaluateRobotStateOrdering(
+    candidateSequence: number | null,
+    candidateTimestamp: Date,
+    lastSequence: number | null,
+    lastTimestamp: Date | null
+  ): RobotStateOrderingDecision {
+    if (!lastTimestamp) {
+      return { accepted: true, reason: "accepted" };
+    }
+
+    const candidateMs = candidateTimestamp.getTime();
+    const lastMs = lastTimestamp.getTime();
+
+    if (candidateMs < lastMs - ROBOT_STATE_ALLOWED_LATENESS_SECONDS * 1000) {
+      return { accepted: false, reason: "older_than_allowed_lateness" };
+    }
+
+    if (candidateSequence !== null && lastSequence !== null) {
+      if (candidateSequence < lastSequence) {
+        return { accepted: false, reason: "sequence_regression" };
+      }
+      if (candidateSequence === lastSequence && candidateMs <= lastMs) {
+        return { accepted: false, reason: "same_sequence_older_timestamp" };
+      }
+      return { accepted: true, reason: "accepted" };
+    }
+
+    if (candidateMs < lastMs) {
+      return { accepted: false, reason: "timestamp_regression" };
+    }
+
+    return { accepted: true, reason: "accepted" };
+  }
+
+  private evaluateTaskStatusOrdering(
+    candidateSequence: number | null,
+    candidateTimestamp: Date,
+    lastSequence: number | null,
+    lastTimestamp: Date | null
+  ): TaskStatusOrderingDecision {
+    if (!lastTimestamp) {
+      return { accepted: true, reason: "accepted" };
+    }
+
+    const candidateMs = candidateTimestamp.getTime();
+    const lastMs = lastTimestamp.getTime();
+    if (candidateMs < lastMs) {
+      return { accepted: false, reason: "updated_at_regression" };
+    }
+    if (candidateMs === lastMs) {
+      if (candidateSequence !== null && lastSequence !== null && candidateSequence > lastSequence) {
+        return { accepted: true, reason: "accepted" };
+      }
+      return { accepted: false, reason: "equal_timestamp_non_increasing_sequence" };
+    }
+
+    return { accepted: true, reason: "accepted" };
+  }
+
+  private async registerDedupeWindow(
+    tenantId: string,
+    siteId: string,
+    messageType: "robot_event" | "task_status",
+    entityId: string,
+    dedupeKey: string,
+    logicalTimestamp: Date,
+    messageId: string,
+    windowSeconds: number
+  ): Promise<DedupeWindowDecision> {
+    const existing = await this.prisma.messageDedupeWindow.findUnique({
+      where: {
+        tenantId_siteId_messageType_entityId_dedupeKey: {
+          tenantId,
+          siteId,
+          messageType,
+          entityId,
+          dedupeKey
+        }
+      }
+    });
+
+    if (existing && logicalTimestamp.getTime() <= existing.expiresAt.getTime()) {
+      return {
+        duplicate: true,
+        reason: "duplicate_within_window"
+      };
+    }
+
+    const expiresAt = new Date(logicalTimestamp.getTime() + windowSeconds * 1000);
+    if (existing) {
+      await this.prisma.messageDedupeWindow.update({
+        where: { id: existing.id },
+        data: {
+          windowSeconds,
+          firstSeenAt: logicalTimestamp,
+          expiresAt,
+          lastMessageId: messageId
+        }
+      });
+      return {
+        duplicate: false,
+        reason: "window_expired"
+      };
+    }
+
+    await this.prisma.messageDedupeWindow.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        siteId,
+        messageType,
+        entityId,
+        dedupeKey,
+        windowSeconds,
+        firstSeenAt: logicalTimestamp,
+        expiresAt,
+        lastMessageId: messageId
+      }
+    });
+    return {
+      duplicate: false,
+      reason: "new_key"
+    };
+  }
+
+  private async logIngestionDrop(
+    tenantId: string,
+    input: {
+      action: string;
+      resourceId: string;
+      messageId: string;
+      reason: string;
+      messageType: CanonicalEnvelopeInput["message_type"];
+      siteId: string;
+      metadata?: Record<string, unknown>;
+    }
+  ) {
+    const resourceType = input.messageType === "task_status" ? "mission" : "robot";
+    await this.auditService.log(tenantId, {
+      action: input.action,
+      resourceType,
+      resourceId: input.resourceId,
+      diff: {
+        before: null,
+        after: {
+          message_id: input.messageId,
+          message_type: input.messageType,
+          site_id: input.siteId,
+          reason: input.reason,
+          ...(input.metadata ?? {})
+        }
+      },
+      actorType: "system",
+      actorId: "ingest-phase4"
     });
   }
 

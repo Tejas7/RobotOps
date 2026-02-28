@@ -69,7 +69,7 @@ const REST_ENDPOINTS = [
   "POST /vendor-site-maps/preview",
   "GET /analytics/dashboard",
   "GET /analytics/cross-site?site_id=all",
-  "POST /ingest/telemetry",
+  "POST /ingest/telemetry (robot_event payload requires dedupe_key; sequence supported)",
   "GET /alerts/events",
   "GET /rbac/scopes",
   "GET /system/pipeline-status"

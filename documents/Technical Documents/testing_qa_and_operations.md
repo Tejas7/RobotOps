@@ -27,6 +27,8 @@
   - Read-model endpoint filtering/offline checks, robot_state upsert checks, and non-state message immutability checks.
 - `npm run qa:v1:phase3`
   - Vendor map CRUD + preview checks, ingest transform resolution/fallback/dead-letter behavior, and transform-miss audit checks.
+- `npm run qa:v1:phase4`
+  - Dedupe window and ordering checks (`robot_event`/`task_status` duplicate suppression, `robot_state` monotonic ordering, sequence validation, and dropped-event audit/dead-letter behavior).
 - `npm run qa:phase1`
   - Core dashboard smoke (overview/fleet/facility + a11y smoke subset).
 - `npm run qa:phase2`
@@ -38,6 +40,7 @@
 - `scripts/v1-phase1-qa.mjs`
 - `scripts/v1-phase2-qa.mjs`
 - `scripts/v1-phase3-qa.mjs`
+- `scripts/v1-phase4-qa.mjs`
 - `scripts/phase1-qa.mjs`
 - `scripts/phase2-qa.mjs`
 - `scripts/phase3-qa.mjs`

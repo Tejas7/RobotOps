@@ -73,10 +73,10 @@ Base URL: `http://localhost:4000/api`
 | GET | `/analytics/cross-site` | `analytics.read.cross_site` or `analytics.read` | Cross-site rollup response by site/trend. |
 | GET | `/analytics/export` | `analytics.export` | Query: `format=csv|pdf`, `dataset=dashboard|cross_site`, + window/site params. |
 
-## Canonical Ingestion (V1 Phase 1 + Phase 3)
+## Canonical Ingestion (V1 Phase 1 + 3 + 4)
 | Method | Path | Permission | Notes |
 |---|---|---|---|
-| POST | `/ingest/telemetry` | `telemetry.ingest` | Accepts strict canonical envelope only. `schema_version=1` accepted. Persists `CanonicalMessage` + `IngestionEvent`, publishes to NATS stub. |
+| POST | `/ingest/telemetry` | `telemetry.ingest` | Accepts strict canonical envelope only. `schema_version=1` accepted. Persists `CanonicalMessage` + `IngestionEvent`, publishes to NATS stub. Phase 4 adds strict dedupe/order handling by message type. |
 
 Canonical envelope required fields:
 - `message_id` (UUID)
@@ -93,6 +93,17 @@ Canonical envelope required fields:
 - `vendor_map_id` (optional)
 - `vendor_map_name` (optional)
 - Existing fields retained: `floorplan_id,x,y,heading_degrees,confidence`
+
+Phase 4 additive/strict payload fields:
+- `robot_state.payload.sequence` (optional positive int)
+- `robot_event.payload.sequence` (optional positive int)
+- `task_status.payload.sequence` (optional positive int)
+- `robot_event.payload.dedupe_key` (required string)
+
+Phase 4 ingest behavior:
+- `robot_state`: allowed lateness `5s`; sequence-preferred ordering; out-of-order updates are processed-as-dropped (audited, not dead-lettered).
+- `robot_event`: semantic dedupe window `1800s` keyed by `(tenant,site,robot,dedupe_key)` prevents duplicate incidents.
+- `task_status`: semantic dedupe window `86400s` keyed by `(task,state,updated_at)` + ordering via task cursor prevents duplicate/regressive mission timeline updates.
 
 Mapping resolution order for `robot_state.pose`:
 1. Match `vendor_map_id` (tenant/site/vendor scoped)

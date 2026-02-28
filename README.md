@@ -16,6 +16,7 @@ Robotics operations and orchestration dashboard for heterogeneous fleets.
 - V1 Phase 1: canonical envelope locked to `robot_state`, `robot_event`, `task_status`.
 - V1 Phase 2: `RobotLastState` read model introduced as canonical robot live-state source (`/robots/last_state`) with compatibility overlays on `/robots` and `/robots/:id`.
 - V1 Phase 3: `VendorSiteMap` mapping + ingest transform path to keep vendor pose in RobotOps floorplan coordinates, with Settings visual transform editor and preview API.
+- V1 Phase 4: dedupe windows + deterministic ordering hardened (`robot_event` `dedupe_key` required, sequence-aware processing, robot/task cursors, and no-duplicate/no-jitter ingest side effects).
 
 ## Technical documentation
 - Technical source of truth: `documents/Technical Documents/`
@@ -100,6 +101,7 @@ npm run build
 npm run qa:v1:phase1
 npm run qa:v1:phase2
 npm run qa:v1:phase3
+npm run qa:v1:phase4
 npm run qa:phase1
 npm run qa:phase2
 npm run qa:phase3

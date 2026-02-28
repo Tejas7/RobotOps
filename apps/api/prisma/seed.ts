@@ -12,6 +12,7 @@ async function main() {
   await prisma.tenantAnalyticsRollupHourly.deleteMany();
   await prisma.siteAnalyticsRollupHourly.deleteMany();
   await prisma.telemetryDeadLetter.deleteMany();
+  await prisma.messageDedupeWindow.deleteMany();
   await prisma.ingestionEvent.deleteMany();
   await prisma.canonicalMessage.deleteMany();
   await prisma.copilotMessage.deleteMany();
@@ -27,6 +28,7 @@ async function main() {
   await prisma.asset.deleteMany();
   await prisma.incidentEvent.deleteMany();
   await prisma.incident.deleteMany();
+  await prisma.taskLastStatus.deleteMany();
   await prisma.missionEvent.deleteMany();
   await prisma.mission.deleteMany();
   await prisma.robotLastState.deleteMany();
@@ -786,6 +788,9 @@ async function main() {
       currentTaskId: null,
       currentTaskState: null,
       currentTaskPercentComplete: null,
+      lastStateTimestamp: robot.lastSeenAt,
+      lastStateSequence: null,
+      lastStateMessageId: null,
       updatedAt: robot.lastSeenAt
     }))
   });
@@ -1179,6 +1184,38 @@ async function main() {
         payload: { from: "running", to: "succeeded" }
       }
     ]
+  });
+
+  const seededMissions = await prisma.mission.findMany({
+    where: { tenantId: "t1" },
+    include: {
+      missionEvents: {
+        where: { type: "state_change" },
+        orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+        take: 1
+      }
+    }
+  });
+  await prisma.taskLastStatus.createMany({
+    data: seededMissions.map((mission) => {
+      const latestStateEvent = mission.missionEvents[0] ?? null;
+      const payload = (latestStateEvent?.payload ?? {}) as { state?: string; to?: string; percent_complete?: number; message?: string };
+      const state = typeof payload.state === "string" ? payload.state : typeof payload.to === "string" ? payload.to : mission.state;
+      const percentComplete = typeof payload.percent_complete === "number" ? Math.round(payload.percent_complete) : null;
+      const message = typeof payload.message === "string" ? payload.message : null;
+
+      return {
+        tenantId: mission.tenantId,
+        siteId: mission.siteId,
+        taskId: mission.id,
+        state,
+        percentComplete,
+        updatedAtLogical: latestStateEvent?.timestamp ?? mission.startTime ?? mission.createdAt,
+        lastSequence: null,
+        lastMessageId: null,
+        message
+      };
+    })
   });
 
   await prisma.incident.createMany({
@@ -2415,6 +2452,7 @@ async function main() {
         severity: null,
         category: null,
         payload: {
+          sequence: 101,
           status: "online",
           battery_percent: 82,
           metrics: {
@@ -2451,6 +2489,7 @@ async function main() {
             robot_id: "r1"
           },
           payload: {
+            sequence: 101,
             status: "online",
             battery_percent: 82,
             metrics: {
@@ -2489,6 +2528,8 @@ async function main() {
         severity: "warning",
         category: "connectivity",
         payload: {
+          sequence: 12,
+          dedupe_key: "seed-r2-connectivity-drop",
           event_type: "connectivity_drop",
           severity: "warning",
           category: "connectivity",
@@ -2518,6 +2559,8 @@ async function main() {
             robot_id: "r2"
           },
           payload: {
+            sequence: 12,
+            dedupe_key: "seed-r2-connectivity-drop",
             event_type: "connectivity_drop",
             severity: "warning",
             category: "connectivity",
@@ -2549,6 +2592,7 @@ async function main() {
         severity: null,
         category: null,
         payload: {
+          sequence: 44,
           task_id: "m2",
           state: "running",
           percent_complete: 55,
@@ -2576,6 +2620,7 @@ async function main() {
             robot_id: "r3"
           },
           payload: {
+            sequence: 44,
             task_id: "m2",
             state: "running",
             percent_complete: 55,
@@ -2736,6 +2781,7 @@ async function main() {
             robot_id: "r1"
           },
           payload: {
+            sequence: 101,
             status: "online",
             battery_percent: 82,
             metrics: {
@@ -2784,6 +2830,8 @@ async function main() {
             robot_id: "r2"
           },
           payload: {
+            sequence: 12,
+            dedupe_key: "seed-r2-connectivity-drop",
             event_type: "connectivity_drop",
             severity: "warning",
             category: "connectivity",
@@ -2825,6 +2873,7 @@ async function main() {
             robot_id: "r3"
           },
           payload: {
+            sequence: 44,
             task_id: "m2",
             state: "running",
             percent_complete: 55,
@@ -2938,6 +2987,35 @@ async function main() {
         error: "Invalid canonical envelope",
         createdAt: new Date("2026-02-26T23:18:01Z"),
         processedAt: null
+      }
+    ]
+  });
+
+  await prisma.messageDedupeWindow.createMany({
+    data: [
+      {
+        id: "mdw1",
+        tenantId: "t1",
+        siteId: "s1",
+        messageType: "robot_event",
+        entityId: "r2",
+        dedupeKey: "seed-r2-connectivity-drop",
+        windowSeconds: 1800,
+        firstSeenAt: new Date("2026-02-26T23:16:00Z"),
+        expiresAt: new Date("2026-02-26T23:46:00Z"),
+        lastMessageId: "22222222-2222-4222-8222-222222222222"
+      },
+      {
+        id: "mdw2",
+        tenantId: "t1",
+        siteId: "s1",
+        messageType: "task_status",
+        entityId: "m2",
+        dedupeKey: "m2:running:2026-02-26T23:17:00.000Z",
+        windowSeconds: 86400,
+        firstSeenAt: new Date("2026-02-26T23:17:00Z"),
+        expiresAt: new Date("2026-02-27T23:17:00Z"),
+        lastMessageId: "33333333-3333-4333-8333-333333333333"
       }
     ]
   });

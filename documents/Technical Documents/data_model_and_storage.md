@@ -21,6 +21,11 @@ Primary schema file: `apps/api/prisma/schema.prisma`
 - `20260227233000_v1_phase3_vendor_site_map`
   - Adds `VendorSiteMap` model for vendor-to-floorplan mapping and transform parameters.
   - Adds partial unique indexes for nullable vendor map keys (`vendorMapId`, `vendorMapName`).
+- `20260228170000_v1_phase4_dedupe_ordering`
+  - Extends `RobotLastState` with ordering cursor columns (`lastStateTimestamp`, `lastStateSequence`, `lastStateMessageId`).
+  - Adds `TaskLastStatus` read-model cursor table.
+  - Adds `MessageDedupeWindow` semantic dedupe-window table for `robot_event`/`task_status`.
+  - Includes backfill SQL for `RobotLastState.lastStateTimestamp` and `TaskLastStatus` from latest mission state-change events.
 
 ## Core Domain Models
 - Tenant context: `Tenant`, `User`, `Site`, `Floorplan`, `Zone`.
@@ -96,6 +101,21 @@ Primary schema file: `apps/api/prisma/schema.prisma`
     - `robotopsFloorplanId` belongs to same tenant/site
     - vendor normalized to lower-case for case-insensitive matching
 
+## V1 Phase 4 Dedupe and Ordering Models
+- `RobotLastState` additions:
+  - `lastStateTimestamp` (accepted robot_state cursor timestamp)
+  - `lastStateSequence` (optional sequence cursor)
+  - `lastStateMessageId` (last accepted message id)
+- `TaskLastStatus`:
+  - Composite key `(tenantId, siteId, taskId)`
+  - Stores latest accepted task status cursor/state fields:
+    - `state`, `percentComplete`, `updatedAtLogical`
+    - `lastSequence`, `lastMessageId`, `message`
+- `MessageDedupeWindow`:
+  - Unique key `(tenantId, siteId, messageType, entityId, dedupeKey)`
+  - Stores semantic dedupe TTL materialization:
+    - `windowSeconds`, `firstSeenAt`, `expiresAt`, `lastMessageId`
+
 ## Key Indexes (Operational)
 - Telemetry query/read-path:
   - `TelemetryPoint(tenantId, robotId, metric, timestamp)`
@@ -108,6 +128,12 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - `IngestionEvent(tenantId, status, createdAt)`
   - `IngestionEvent(tenantId, dedupeKey)` unique
   - `TelemetryDeadLetter(tenantId, createdAt)`
+- Phase 4 dedupe/order indexes:
+  - `TaskLastStatus(tenantId, siteId, updatedAtLogical)`
+  - `TaskLastStatus(tenantId, taskId)`
+  - `MessageDedupeWindow(tenantId, expiresAt)`
+  - `MessageDedupeWindow(tenantId, siteId, messageType, entityId)`
+  - `MessageDedupeWindow` unique `(tenantId, siteId, messageType, entityId, dedupeKey)`
 - Vendor map lookups:
   - `VendorSiteMap(tenantId, siteId, vendor, vendorMapId)`
   - `VendorSiteMap(tenantId, siteId, vendor, vendorMapName)`
@@ -158,3 +184,8 @@ Seed script (`apps/api/prisma/seed.ts`) is idempotent and includes:
   - representative `VendorSiteMap` rows for seeded sites/floorplans
   - canonical `robot_state` examples for map-id and map-name routing
   - negative unmapped transform fixture with failed ingestion + dead-letter
+- V1 Phase 4 fixtures:
+  - canonical envelopes include `sequence` support for all message types
+  - canonical `robot_event` fixture includes required `dedupe_key`
+  - seeded `TaskLastStatus` baseline rows from mission state timeline
+  - seeded `MessageDedupeWindow` samples for robot-event and task-status windows

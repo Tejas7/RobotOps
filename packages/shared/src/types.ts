@@ -346,6 +346,7 @@ export interface CanonicalEnvelopeEntity {
 }
 
 export interface RobotStatePayload {
+  sequence?: number;
   status?: Status;
   batteryPercent?: number;
   pose?: {
@@ -400,8 +401,9 @@ export interface VendorSiteMapPreviewResponse {
 }
 
 export interface RobotEventPayload {
+  sequence?: number;
   eventId?: string;
-  dedupeKey?: string;
+  dedupeKey: string;
   eventType: string;
   severity: CanonicalSeverity;
   category: CanonicalCategory;
@@ -413,6 +415,7 @@ export interface RobotEventPayload {
 }
 
 export interface TaskStatusPayload {
+  sequence?: number;
   taskId: string;
   state: "queued" | "running" | "blocked" | "succeeded" | "failed" | "canceled";
   percentComplete?: number;
@@ -444,6 +447,21 @@ export interface CanonicalIngestResponse {
 }
 
 export type TelemetryIngestResponse = CanonicalIngestResponse;
+
+export interface RobotStateOrderingDecision {
+  accepted: boolean;
+  reason: "accepted" | "older_than_allowed_lateness" | "sequence_regression" | "same_sequence_older_timestamp" | "timestamp_regression";
+}
+
+export interface TaskStatusOrderingDecision {
+  accepted: boolean;
+  reason: "accepted" | "duplicate_within_window" | "updated_at_regression" | "equal_timestamp_non_increasing_sequence";
+}
+
+export interface DedupeWindowDecision {
+  duplicate: boolean;
+  reason: "new_key" | "duplicate_within_window" | "window_expired";
+}
 
 export interface TelemetryBucket {
   timestamp: string;

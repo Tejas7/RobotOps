@@ -193,6 +193,9 @@ export const dashboardConfigPatchSchema = z
   .refine((input) => Object.keys(input).length > 0, "At least one field is required");
 
 const TELEMETRY_INGEST_METRICS = ["battery", "temp_c", "cpu_percent", "network_rssi", "disk_percent"] as const;
+export const ROBOT_STATE_ALLOWED_LATENESS_SECONDS = 5 as const;
+export const ROBOT_EVENT_DEDUPE_WINDOW_SECONDS = 1800 as const;
+export const TASK_STATUS_DEDUPE_WINDOW_SECONDS = 86400 as const;
 
 export const canonicalMessageTypeSchema = z.enum(["robot_state", "robot_event", "task_status"]);
 export const canonicalSeveritySchema = z.enum(["info", "warning", "major", "critical"]);
@@ -214,6 +217,7 @@ export function isSupportedCanonicalSchemaVersion(version: number) {
 
 export const robotStatePayloadSchema = z
   .object({
+    sequence: z.number().int().positive().optional(),
     status: z.enum(["online", "offline", "degraded", "maintenance", "emergency_stop"]).optional(),
     battery_percent: z.number().min(0).max(100).optional(),
     pose: z
@@ -269,8 +273,9 @@ export const robotStatePayloadSchema = z
   });
 
 export const robotEventPayloadSchema = z.object({
+  sequence: z.number().int().positive().optional(),
   event_id: z.string().min(1).optional(),
-  dedupe_key: z.string().min(1).optional(),
+  dedupe_key: z.string().min(1),
   event_type: z.string().min(1),
   severity: canonicalSeveritySchema,
   category: canonicalCategorySchema,
@@ -282,6 +287,7 @@ export const robotEventPayloadSchema = z.object({
 });
 
 export const taskStatusPayloadSchema = z.object({
+  sequence: z.number().int().positive().optional(),
   task_id: z.string().min(1),
   state: z.enum(["queued", "running", "blocked", "succeeded", "failed", "canceled"]),
   percent_complete: z.number().min(0).max(100).optional(),

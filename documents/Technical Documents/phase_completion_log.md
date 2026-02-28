@@ -64,16 +64,26 @@ Required fields per entry:
   - `npm run qa:v1:phase2` regression (pass)
   - `npm run qa:v1:phase3` (pass)
 
+### 2026-02-28 - V1 Phase 4
+- Status: completed (agent workflow)
+- Scope summary: hardened canonical ingest semantics with strict `robot_event.dedupe_key`, sequence-aware ordering, semantic dedupe windows, read-model/task cursors, and structured audit drops for dedupe/order rejects.
+- Verification noted in repo workflow:
+  - `npm run typecheck` (pass)
+  - `npm run build` (pass)
+  - `npm run qa:v1:phase1` regression (pass)
+  - `npm run qa:v1:phase2` regression (pass)
+  - `npm run qa:v1:phase3` regression (pass)
+  - `npm run qa:v1:phase4` (pass)
+
 ## Last Technical Docs Sync
 - Date: 2026-02-28
 - Updated by: agent
 - Files refreshed:
-  - `documents/Implementation Plan/V1/implementation_plan_phase3.md`
+  - `documents/Implementation Plan/V1/implementation_plan_phase4.md`
   - `README.md`
   - `Technical Documents/README.md`
   - `backend_api_reference.md`
   - `data_model_and_storage.md`
   - `realtime_ingestion_and_alerting.md`
-  - `frontend_architecture.md`
   - `testing_qa_and_operations.md`
   - `phase_completion_log.md`

@@ -68,6 +68,8 @@ model Tenant {
   robotLastStates RobotLastState[]
   siteSettings SiteSetting[]
   vendorSiteMaps VendorSiteMap[]
+  taskLastStatuses TaskLastStatus[]
+  messageDedupeWindows MessageDedupeWindow[]
 }
 
 model User {
@@ -100,6 +102,8 @@ model Site {
   robotLastStates RobotLastState[]
   siteSettings SiteSetting[]
   vendorSiteMaps VendorSiteMap[]
+  taskLastStatuses TaskLastStatus[]
+  messageDedupeWindows MessageDedupeWindow[]
 }
 
 model Floorplan {
@@ -247,6 +251,9 @@ model RobotLastState {
   currentTaskId              String?
   currentTaskState           String?
   currentTaskPercentComplete Int?
+  lastStateTimestamp         DateTime?
+  lastStateSequence          Int?
+  lastStateMessageId         String?
   updatedAt                  DateTime @updatedAt
   tenant                     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   site                       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
@@ -257,6 +264,48 @@ model RobotLastState {
   @@index([tenantId, siteId, vendor])
   @@index([tenantId, siteId, floorplanId])
   @@index([tenantId, siteId, updatedAt])
+}
+
+model TaskLastStatus {
+  tenantId         String
+  siteId           String
+  taskId           String
+  state            String
+  percentComplete  Int?
+  updatedAtLogical DateTime
+  lastSequence     Int?
+  lastMessageId    String?
+  message          String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site             Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  mission          Mission  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, siteId, taskId])
+  @@index([tenantId, siteId, updatedAtLogical])
+  @@index([tenantId, taskId])
+}
+
+model MessageDedupeWindow {
+  id            String      @id
+  tenantId      String
+  siteId        String
+  messageType   MessageType
+  entityId      String
+  dedupeKey     String
+  windowSeconds Int
+  firstSeenAt   DateTime
+  expiresAt     DateTime
+  lastMessageId String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, siteId, messageType, entityId, dedupeKey])
+  @@index([tenantId, expiresAt])
+  @@index([tenantId, siteId, messageType, entityId])
 }
 
 model Mission {
@@ -287,6 +336,7 @@ model Mission {
   assignedRobot      Robot?        @relation(fields: [assignedRobotId], references: [id], onDelete: SetNull)
   missionEvents      MissionEvent[]
   incidents          Incident[]
+  taskLastStatuses   TaskLastStatus[]
 }
 
 model MissionEvent {

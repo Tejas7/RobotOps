@@ -53,6 +53,11 @@ Duplicate detection checks both:
 
 Duplicate response returns `accepted:0, duplicate:1`.
 
+Phase 4 semantic dedupe windows:
+- `robot_event`: `(tenantId,siteId,robotId,dedupe_key)` window `1800s`
+- `task_status`: `(tenantId,siteId,taskId,state,updated_at)` encoded as dedupe key, window `86400s`
+- Semantic duplicates are processed-as-dropped (audited) and do not create dead letters.
+
 ## Queue Abstraction and Consumer Tick
 Service: `apps/api/src/services/nats-jetstream.service.ts`
 
@@ -63,31 +68,49 @@ Current behavior:
 
 Consumer loop: `processIngestionTick()` in `Phase3Service`:
 1. Pull up to 200 messages from configured telemetry subject.
-2. Extract ingestion event IDs.
-3. If bus is empty, fallback to queued/published DB events.
-4. Process each event via `processIngestionEvent()`.
+2. Cleanup expired `MessageDedupeWindow` rows (`expiresAt < now`).
+3. Extract ingestion event IDs.
+4. If bus is empty, fallback to queued/published DB events.
+5. Process each event via `processIngestionEvent()`.
 
 ## Consumer Routing by `message_type`
 - `robot_state`
   - Updates `Robot` base record and upserts `RobotLastState`.
   - `RobotLastState` is only mutated by this message type.
+  - Phase 4 ordering gate:
+    - drop when older than `lastStateTimestamp - 5s`
+    - prefer sequence ordering when both candidate + cursor sequences are present
+    - fallback to timestamp monotonicity when sequence is absent
+  - Accepted writes update cursor fields (`lastStateTimestamp`, `lastStateSequence`, `lastStateMessageId`).
   - Resolves vendor map binding and transforms incoming pose into RobotOps floorplan space.
   - Appends telemetry points from `payload.metrics`.
   - Emits `telemetry.live`.
   - Does not create incidents.
 - `robot_event`
   - Does not mutate `RobotLastState`.
+  - Phase 4 requires `payload.dedupe_key`.
+  - Uses semantic dedupe window before incident creation.
   - Creates incident and incident timeline event when `create_incident=true`.
   - Emits `incidents.live`.
 - `task_status`
   - Does not mutate `RobotLastState`.
+  - Uses semantic dedupe window + task cursor ordering.
   - Updates mission lifecycle fields/timestamps/duration.
   - Appends mission timeline event.
+  - Upserts `TaskLastStatus` read-model cursor.
   - Emits `missions.live`.
 
 Failure path:
 - Marks ingestion event `failed`.
 - Persists payload/error in `TelemetryDeadLetter`.
+
+Drop path (Phase 4 ordering/dedupe):
+- Marks ingestion event `processed` (not failed).
+- Emits audit entries:
+  - `telemetry.robot_state.dropped`
+  - `telemetry.robot_event.dropped`
+  - `telemetry.task_status.dropped`
+- Includes drop reason in audit `diff.after.reason`.
 
 ## V1 Phase 3 Pose Mapping and Transform
 Applied in `Phase3Service.handleRobotStateMessage()` when `payload.pose` is present.
