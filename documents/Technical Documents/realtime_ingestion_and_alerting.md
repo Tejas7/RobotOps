@@ -71,6 +71,7 @@ Consumer loop: `processIngestionTick()` in `Phase3Service`:
 - `robot_state`
   - Updates `Robot` base record and upserts `RobotLastState`.
   - `RobotLastState` is only mutated by this message type.
+  - Resolves vendor map binding and transforms incoming pose into RobotOps floorplan space.
   - Appends telemetry points from `payload.metrics`.
   - Emits `telemetry.live`.
   - Does not create incidents.
@@ -87,6 +88,26 @@ Consumer loop: `processIngestionTick()` in `Phase3Service`:
 Failure path:
 - Marks ingestion event `failed`.
 - Persists payload/error in `TelemetryDeadLetter`.
+
+## V1 Phase 3 Pose Mapping and Transform
+Applied in `Phase3Service.handleRobotStateMessage()` when `payload.pose` is present.
+
+Resolution order:
+1. `vendor_map_id` match on `(tenantId, siteId, source.vendor, vendorMapId)`
+2. Else `vendor_map_name` match on `(tenantId, siteId, source.vendor, vendorMapName)`
+3. Else compatibility fallback:
+   - passthrough when `pose.floorplan_id` is valid for tenant/site
+   - otherwise reject processing and dead-letter
+
+Transform math:
+- `scale -> rotate(origin) -> translate`
+- heading adjustment: `normalize_0_360(heading_in + rotationDegrees)`
+- output floorplan uses mapping `robotopsFloorplanId`
+
+Transform-miss behavior:
+- audit action emitted: `vendor_site_map.transform_miss`
+- ingestion event marked failed
+- payload and error persisted to `TelemetryDeadLetter`
 
 ## Alerting Engine (Phase 3)
 Tick loop: `runAlertEngineTick()`

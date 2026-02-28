@@ -312,6 +312,36 @@ export class OpsController {
     return this.opsService.activateDashboardConfig(user.tenantId, user, id);
   }
 
+  @Get("vendor-site-maps")
+  @RequirePermissions("config.read")
+  listVendorSiteMaps(@CurrentUser() user: RequestUser, @Query("site_id") siteId?: string, @Query("vendor") vendor?: string) {
+    return this.opsService.listVendorSiteMaps(user.tenantId, { site_id: siteId, vendor });
+  }
+
+  @Post("vendor-site-maps")
+  @RequirePermissions("config.write")
+  createVendorSiteMap(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.opsService.createVendorSiteMap(user.tenantId, user, body);
+  }
+
+  @Post("vendor-site-maps/preview")
+  @RequirePermissions("config.write")
+  previewVendorSiteMap(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.opsService.previewVendorSiteMap(user.tenantId, body);
+  }
+
+  @Patch("vendor-site-maps/:id")
+  @RequirePermissions("config.write")
+  patchVendorSiteMap(@CurrentUser() user: RequestUser, @Param("id") id: string, @Body() body: unknown) {
+    return this.opsService.patchVendorSiteMap(user.tenantId, user, id, body);
+  }
+
+  @Delete("vendor-site-maps/:id")
+  @RequirePermissions("config.write")
+  deleteVendorSiteMap(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.opsService.deleteVendorSiteMap(user.tenantId, user, id);
+  }
+
   @Get("analytics/dashboard")
   @RequireAnyPermissions("analytics.read.site", "analytics.read.cross_site", "analytics.read")
   getAnalyticsDashboard(

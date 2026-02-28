@@ -18,6 +18,9 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - Canonical envelope enums/model (`CanonicalMessage`) and ingestion linkage.
 - `20260227220000_v1_phase2_robot_last_state`
   - Read-model tables: `RobotLastState`, `SiteSetting` with backfill from `Robot`.
+- `20260227233000_v1_phase3_vendor_site_map`
+  - Adds `VendorSiteMap` model for vendor-to-floorplan mapping and transform parameters.
+  - Adds partial unique indexes for nullable vendor map keys (`vendorMapId`, `vendorMapName`).
 
 ## Core Domain Models
 - Tenant context: `Tenant`, `User`, `Site`, `Floorplan`, `Zone`.
@@ -77,6 +80,22 @@ Primary schema file: `apps/api/prisma/schema.prisma`
     - `robotStatePublishPeriodSeconds = 2`
   - Used for offline-status computation and robot broadcast cadence defaults.
 
+## V1 Phase 3 Mapping Model
+- `VendorSiteMap`
+  - Source of truth for vendor map bindings and transform params.
+  - Key fields:
+    - `tenantId`, `siteId`, `vendor`
+    - `vendorMapId` (nullable)
+    - `vendorMapName` (nullable)
+    - `robotopsFloorplanId`
+    - `scale`, `rotationDegrees`, `translateX`, `translateY`
+    - `createdBy`, `updatedBy`, timestamps
+  - Validation invariants in API/service layer:
+    - at least one of `vendorMapId` or `vendorMapName`
+    - `scale > 0`
+    - `robotopsFloorplanId` belongs to same tenant/site
+    - vendor normalized to lower-case for case-insensitive matching
+
 ## Key Indexes (Operational)
 - Telemetry query/read-path:
   - `TelemetryPoint(tenantId, robotId, metric, timestamp)`
@@ -89,6 +108,11 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - `IngestionEvent(tenantId, status, createdAt)`
   - `IngestionEvent(tenantId, dedupeKey)` unique
   - `TelemetryDeadLetter(tenantId, createdAt)`
+- Vendor map lookups:
+  - `VendorSiteMap(tenantId, siteId, vendor, vendorMapId)`
+  - `VendorSiteMap(tenantId, siteId, vendor, vendorMapName)`
+  - Partial unique index on `(tenantId, siteId, vendor, vendorMapId)` where `vendorMapId IS NOT NULL`
+  - Partial unique index on `(tenantId, siteId, vendor, vendorMapName)` where `vendorMapName IS NOT NULL`
 
 ## Rollup Tables
 - `SiteAnalyticsRollupHourly`
@@ -130,3 +154,7 @@ Seed script (`apps/api/prisma/seed.ts`) is idempotent and includes:
 - Rollup and alerting-related fixtures.
 - Canonical envelope fixtures for all 3 `message_type` values and an invalid dead-letter scenario.
 - V1 read-model fixtures: per-site `SiteSetting` defaults and seeded `RobotLastState` rows.
+- V1 Phase 3 fixtures:
+  - representative `VendorSiteMap` rows for seeded sites/floorplans
+  - canonical `robot_state` examples for map-id and map-name routing
+  - negative unmapped transform fixture with failed ingestion + dead-letter

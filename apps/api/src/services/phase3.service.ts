@@ -16,6 +16,7 @@ import {
   crossSiteAnalyticsQuerySchema,
   normalizePermissions,
   parseCanonicalPayload,
+  transformVendorPosePoint,
   permissionsForRole,
   roleScopeOverridePatchSchema,
   type CanonicalEnvelopeInput,
@@ -1371,11 +1372,26 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         : payload.metrics?.battery !== undefined
           ? Math.round(payload.metrics.battery)
           : existingLastState?.batteryPercent ?? robot.batteryPercent;
-    const floorplanId = payload.pose?.floorplan_id ?? existingLastState?.floorplanId ?? robot.floorplanId;
-    const x = payload.pose?.x ?? existingLastState?.x ?? robot.x;
-    const y = payload.pose?.y ?? existingLastState?.y ?? robot.y;
-    const headingDegrees = payload.pose?.heading_degrees ?? existingLastState?.headingDegrees ?? robot.headingDegrees;
-    const confidence = payload.pose?.confidence ?? existingLastState?.confidence ?? robot.confidence;
+    let floorplanId = existingLastState?.floorplanId ?? robot.floorplanId;
+    let x = existingLastState?.x ?? robot.x;
+    let y = existingLastState?.y ?? robot.y;
+    let headingDegrees = existingLastState?.headingDegrees ?? robot.headingDegrees;
+    let confidence = existingLastState?.confidence ?? robot.confidence;
+
+    if (payload.pose) {
+      const transformedPose = await this.resolveRobotStatePose(tenantId, envelope, payload, {
+        floorplanId,
+        x,
+        y,
+        headingDegrees,
+        confidence
+      });
+      floorplanId = transformedPose.floorplanId;
+      x = transformedPose.x;
+      y = transformedPose.y;
+      headingDegrees = transformedPose.headingDegrees;
+      confidence = transformedPose.confidence;
+    }
     const cpuPercent =
       payload.telemetry?.cpu_percent !== undefined
         ? Math.round(payload.telemetry.cpu_percent)
@@ -1643,6 +1659,133 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       percentComplete: payload.percent_complete ?? null,
       timestamp: payload.updated_at ?? envelope.timestamp
     });
+  }
+
+  private async resolveRobotStatePose(
+    tenantId: string,
+    envelope: CanonicalEnvelopeInput,
+    payload: RobotStatePayloadInput,
+    fallback: { floorplanId: string; x: number; y: number; headingDegrees: number; confidence: number }
+  ) {
+    const pose = payload.pose;
+    if (!pose) {
+      return fallback;
+    }
+
+    const vendor = this.normalizeVendorValue(envelope.source.vendor);
+    const vendorMapId = pose.vendor_map_id ? pose.vendor_map_id.trim().toLowerCase() : null;
+    const vendorMapName = pose.vendor_map_name ? pose.vendor_map_name.trim().toLowerCase() : null;
+
+    let mapping:
+      | {
+          robotopsFloorplanId: string;
+          scale: number;
+          rotationDegrees: number;
+          translateX: number;
+          translateY: number;
+        }
+      | null = null;
+
+    if (vendorMapId) {
+      mapping = await this.prisma.vendorSiteMap.findFirst({
+        where: {
+          tenantId,
+          siteId: envelope.site_id,
+          vendor,
+          vendorMapId
+        },
+        select: {
+          robotopsFloorplanId: true,
+          scale: true,
+          rotationDegrees: true,
+          translateX: true,
+          translateY: true
+        }
+      });
+    } else if (vendorMapName) {
+      mapping = await this.prisma.vendorSiteMap.findFirst({
+        where: {
+          tenantId,
+          siteId: envelope.site_id,
+          vendor,
+          vendorMapName
+        },
+        select: {
+          robotopsFloorplanId: true,
+          scale: true,
+          rotationDegrees: true,
+          translateX: true,
+          translateY: true
+        }
+      });
+    }
+
+    if (mapping) {
+      const transformed = transformVendorPosePoint(
+        {
+          x: pose.x,
+          y: pose.y,
+          headingDegrees: pose.heading_degrees,
+          confidence: pose.confidence
+        },
+        {
+          scale: mapping.scale,
+          rotationDegrees: mapping.rotationDegrees,
+          translateX: mapping.translateX,
+          translateY: mapping.translateY
+        }
+      );
+
+      return {
+        floorplanId: mapping.robotopsFloorplanId,
+        x: transformed.x,
+        y: transformed.y,
+        headingDegrees: transformed.headingDegrees ?? fallback.headingDegrees,
+        confidence: transformed.confidence ?? fallback.confidence
+      };
+    }
+
+    if (pose.floorplan_id) {
+      const floorplan = await this.prisma.floorplan.findFirst({
+        where: {
+          id: pose.floorplan_id,
+          tenantId,
+          siteId: envelope.site_id
+        },
+        select: { id: true }
+      });
+
+      if (floorplan) {
+        return {
+          floorplanId: pose.floorplan_id,
+          x: pose.x,
+          y: pose.y,
+          headingDegrees: pose.heading_degrees ?? fallback.headingDegrees,
+          confidence: pose.confidence ?? fallback.confidence
+        };
+      }
+    }
+
+    const errorMessage = "No vendor site map matched and pose.floorplan_id is not a valid RobotOps floorplan for tenant/site";
+    await this.auditService.log(tenantId, {
+      action: "vendor_site_map.transform_miss",
+      resourceType: "robot",
+      resourceId: envelope.entity.robot_id,
+      diff: {
+        before: null,
+        after: {
+          message_id: envelope.message_id,
+          site_id: envelope.site_id,
+          vendor,
+          vendor_map_id: vendorMapId,
+          vendor_map_name: vendorMapName,
+          floorplan_id: pose.floorplan_id ?? null
+        }
+      },
+      actorType: "system",
+      actorId: "ingestion"
+    });
+    throw new Error(errorMessage);
   }
 
   async refreshRollups() {
@@ -2283,6 +2426,10 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
 
   private computeHealthScore(cpuPercent: number, memoryPercent: number, diskPercent: number) {
     return Math.max(0, Math.min(100, 100 - Math.round((cpuPercent + memoryPercent + diskPercent) / 3)));
+  }
+
+  private normalizeVendorValue(vendor: string) {
+    return vendor.trim().toLowerCase();
   }
 
   private async resolveSiteIds(tenantId: string, siteId?: string, explicitSiteIds: string[] = []) {

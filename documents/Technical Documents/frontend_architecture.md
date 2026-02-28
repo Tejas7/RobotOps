@@ -112,8 +112,13 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Configuration-as-code editor and platform settings.
 - Uses:
   - `/dashboard-configs` + `/dashboard-configs/validate` + activation path
+  - `/vendor-site-maps` + `/vendor-site-maps/preview`
   - `/rbac/scopes`, `/rbac/roles`, `/rbac/roles/:role`
   - `/alerts/policies`, `/alerts/rules`, `/alerts/test-route`
+- Features:
+  - Vendor map mapping list/create/edit/delete flows.
+  - Visual transform editor with draggable origin/axis/sample handles.
+  - Live preview of transformed output points from `/vendor-site-maps/preview`.
 
 ### `/developer`
 - Platform diagnostics and tooling surface.

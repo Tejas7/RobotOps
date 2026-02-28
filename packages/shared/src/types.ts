@@ -85,6 +85,24 @@ export interface SiteSetting {
   updatedAt: string;
 }
 
+export interface VendorSiteMap {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  vendor: string;
+  vendorMapId: string | null;
+  vendorMapName: string | null;
+  robotopsFloorplanId: string;
+  scale: number;
+  rotationDegrees: number;
+  translateX: number;
+  translateY: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RobotOfflineComputationInput {
   reportedStatus: Status;
   lastSeenAt: string;
@@ -332,6 +350,8 @@ export interface RobotStatePayload {
   batteryPercent?: number;
   pose?: {
     floorplanId?: string;
+    vendorMapId?: string;
+    vendorMapName?: string;
     x: number;
     y: number;
     headingDegrees?: number;
@@ -351,6 +371,32 @@ export interface RobotStatePayload {
     percentComplete?: number;
   };
   meta?: Record<string, unknown>;
+}
+
+export interface VendorPosePoint {
+  x: number;
+  y: number;
+  headingDegrees?: number;
+  confidence?: number;
+}
+
+export interface VendorPoseTransformParams {
+  scale: number;
+  rotationDegrees: number;
+  translateX: number;
+  translateY: number;
+}
+
+export interface VendorPoseTransformResult extends VendorPosePoint {
+  headingDegrees?: number;
+}
+
+export interface VendorSiteMapPreviewResponse {
+  floorplanId: string | null;
+  points: Array<{
+    input: VendorPosePoint;
+    output: VendorPoseTransformResult;
+  }>;
 }
 
 export interface RobotEventPayload {

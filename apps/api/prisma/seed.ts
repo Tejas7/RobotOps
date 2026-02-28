@@ -30,6 +30,7 @@ async function main() {
   await prisma.missionEvent.deleteMany();
   await prisma.mission.deleteMany();
   await prisma.robotLastState.deleteMany();
+  await prisma.vendorSiteMap.deleteMany();
   await prisma.robotPathPoint.deleteMany();
   await prisma.telemetryPoint.deleteMany();
   await prisma.robot.deleteMany();
@@ -157,6 +158,62 @@ async function main() {
         originX: 0,
         originY: 0,
         rotationDegrees: 0
+      }
+    ]
+  });
+
+  await prisma.vendorSiteMap.createMany({
+    data: [
+      {
+        id: "vsm1",
+        tenantId: "t1",
+        siteId: "s1",
+        vendor: "vendor_acme",
+        vendorMapId: "acme-s1-main",
+        vendorMapName: null,
+        robotopsFloorplanId: "f1",
+        scale: 1.12,
+        rotationDegrees: 7.5,
+        translateX: 14,
+        translateY: -9,
+        createdBy: "u1",
+        updatedBy: "u1",
+        createdAt: new Date("2026-02-01T12:00:00Z"),
+        updatedAt: new Date("2026-02-01T12:00:00Z")
+      },
+      {
+        id: "vsm2",
+        tenantId: "t1",
+        siteId: "s1",
+        vendor: "vendor_acme",
+        vendorMapId: null,
+        vendorMapName: "mezzanine_map",
+        robotopsFloorplanId: "f1b",
+        scale: 0.94,
+        rotationDegrees: -12,
+        translateX: 6,
+        translateY: 11,
+        createdBy: "u1",
+        updatedBy: "u1",
+        createdAt: new Date("2026-02-01T12:05:00Z"),
+        updatedAt: new Date("2026-02-01T12:05:00Z")
+      },
+      {
+        id: "vsm3",
+        tenantId: "t1",
+        siteId: "s2",
+        vendor: "vendor_beta",
+        vendorMapId: "beta-crossdock",
+        vendorMapName: "beta_crossdock_name",
+        robotopsFloorplanId: "f2",
+        scale: 1,
+        rotationDegrees: 0,
+        translateX: 0,
+        translateY: 0,
+        createdBy: "u1",
+        updatedBy: "u1",
+        createdAt: new Date("2026-02-01T12:10:00Z"),
+        updatedAt: new Date("2026-02-01T12:10:00Z")
       }
     ]
   });
@@ -2368,6 +2425,7 @@ async function main() {
             disk_percent: 61
           },
           pose: {
+            vendor_map_id: "acme-s1-main",
             floorplan_id: "f1",
             x: 42.1,
             y: 24.7,
@@ -2403,6 +2461,7 @@ async function main() {
               disk_percent: 61
             },
             pose: {
+              vendor_map_id: "acme-s1-main",
               floorplan_id: "f1",
               x: 42.1,
               y: 24.7,
@@ -2528,6 +2587,124 @@ async function main() {
           }
         },
         createdAt: new Date("2026-02-26T23:17:01Z")
+      },
+      {
+        id: "cmsg4",
+        tenantId: "t1",
+        siteId: "s1",
+        messageId: "44444444-4444-4444-8444-444444444444",
+        schemaVersion: 1,
+        messageType: "robot_state",
+        timestamp: new Date("2026-02-26T23:18:00Z"),
+        sourceType: "edge",
+        sourceId: "edge-mezz-1",
+        vendor: "vendor_acme",
+        protocol: "http",
+        entityType: "robot",
+        robotId: "r4",
+        severity: null,
+        category: null,
+        payload: {
+          status: "online",
+          battery_percent: 64,
+          pose: {
+            vendor_map_name: "mezzanine_map",
+            x: 38.4,
+            y: 17.1,
+            heading_degrees: 22,
+            confidence: 0.93
+          }
+        },
+        rawEnvelope: {
+          message_id: "44444444-4444-4444-8444-444444444444",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:18:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-mezz-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r4"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 64,
+            pose: {
+              vendor_map_name: "mezzanine_map",
+              x: 38.4,
+              y: 17.1,
+              heading_degrees: 22,
+              confidence: 0.93
+            }
+          }
+        },
+        createdAt: new Date("2026-02-26T23:18:01Z")
+      },
+      {
+        id: "cmsg5",
+        tenantId: "t1",
+        siteId: "s1",
+        messageId: "55555555-5555-4555-8555-555555555555",
+        schemaVersion: 1,
+        messageType: "robot_state",
+        timestamp: new Date("2026-02-26T23:19:00Z"),
+        sourceType: "edge",
+        sourceId: "edge-unmapped-1",
+        vendor: "vendor_acme",
+        protocol: "http",
+        entityType: "robot",
+        robotId: "r2",
+        severity: null,
+        category: null,
+        payload: {
+          status: "online",
+          battery_percent: 51,
+          pose: {
+            vendor_map_id: "missing-map-key",
+            floorplan_id: "unknown-floorplan",
+            x: 10.5,
+            y: 8.2,
+            heading_degrees: 180,
+            confidence: 0.9
+          }
+        },
+        rawEnvelope: {
+          message_id: "55555555-5555-4555-8555-555555555555",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:19:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-unmapped-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r2"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 51,
+            pose: {
+              vendor_map_id: "missing-map-key",
+              floorplan_id: "unknown-floorplan",
+              x: 10.5,
+              y: 8.2,
+              heading_degrees: 180,
+              confidence: 0.9
+            }
+          }
+        },
+        createdAt: new Date("2026-02-26T23:19:01Z")
       }
     ]
   });
@@ -2569,6 +2746,7 @@ async function main() {
               disk_percent: 61
             },
             pose: {
+              vendor_map_id: "acme-s1-main",
               floorplan_id: "f1",
               x: 42.1,
               y: 24.7,
@@ -2664,6 +2842,87 @@ async function main() {
       {
         id: "ievt4",
         tenantId: "t1",
+        canonicalMessageId: "cmsg4",
+        source: "edge:edge-mezz-1",
+        dedupeKey: "44444444-4444-4444-8444-444444444444",
+        status: "processed",
+        payload: {
+          message_id: "44444444-4444-4444-8444-444444444444",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:18:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-mezz-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r4"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 64,
+            pose: {
+              vendor_map_name: "mezzanine_map",
+              x: 38.4,
+              y: 17.1,
+              heading_degrees: 22,
+              confidence: 0.93
+            }
+          }
+        },
+        error: null,
+        createdAt: new Date("2026-02-26T23:18:01Z"),
+        processedAt: new Date("2026-02-26T23:18:02Z")
+      },
+      {
+        id: "ievt5",
+        tenantId: "t1",
+        canonicalMessageId: "cmsg5",
+        source: "edge:edge-unmapped-1",
+        dedupeKey: "55555555-5555-4555-8555-555555555555",
+        status: "failed",
+        payload: {
+          message_id: "55555555-5555-4555-8555-555555555555",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:19:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-unmapped-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r2"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 51,
+            pose: {
+              vendor_map_id: "missing-map-key",
+              floorplan_id: "unknown-floorplan",
+              x: 10.5,
+              y: 8.2,
+              heading_degrees: 180,
+              confidence: 0.9
+            }
+          }
+        },
+        error: "No vendor site map matched and pose.floorplan_id is not a valid RobotOps floorplan for tenant/site",
+        createdAt: new Date("2026-02-26T23:19:01Z"),
+        processedAt: null
+      },
+      {
+        id: "ievt6",
+        tenantId: "t1",
         canonicalMessageId: null,
         source: "seed",
         dedupeKey: "invalid-envelope-1",
@@ -2699,6 +2958,43 @@ async function main() {
         },
         error: "Invalid canonical envelope",
         createdAt: new Date("2026-02-26T23:16:03Z")
+      },
+      {
+        id: "tdl2",
+        tenantId: "t1",
+        source: "edge:edge-unmapped-1",
+        payload: {
+          message_id: "55555555-5555-4555-8555-555555555555",
+          schema_version: 1,
+          tenant_id: "t1",
+          site_id: "s1",
+          message_type: "robot_state",
+          timestamp: "2026-02-26T23:19:00Z",
+          source: {
+            source_type: "edge",
+            source_id: "edge-unmapped-1",
+            vendor: "vendor_acme",
+            protocol: "http"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: "r2"
+          },
+          payload: {
+            status: "online",
+            battery_percent: 51,
+            pose: {
+              vendor_map_id: "missing-map-key",
+              floorplan_id: "unknown-floorplan",
+              x: 10.5,
+              y: 8.2,
+              heading_degrees: 180,
+              confidence: 0.9
+            }
+          }
+        },
+        error: "No vendor site map matched and pose.floorplan_id is not a valid RobotOps floorplan for tenant/site",
+        createdAt: new Date("2026-02-26T23:19:03Z")
       }
     ]
   });

@@ -25,6 +25,8 @@
   - Canonical envelope ingest validation, schema/version rejections, routing and side effects.
 - `npm run qa:v1:phase2`
   - Read-model endpoint filtering/offline checks, robot_state upsert checks, and non-state message immutability checks.
+- `npm run qa:v1:phase3`
+  - Vendor map CRUD + preview checks, ingest transform resolution/fallback/dead-letter behavior, and transform-miss audit checks.
 - `npm run qa:phase1`
   - Core dashboard smoke (overview/fleet/facility + a11y smoke subset).
 - `npm run qa:phase2`
@@ -35,6 +37,7 @@
 ## QA Script Locations
 - `scripts/v1-phase1-qa.mjs`
 - `scripts/v1-phase2-qa.mjs`
+- `scripts/v1-phase3-qa.mjs`
 - `scripts/phase1-qa.mjs`
 - `scripts/phase2-qa.mjs`
 - `scripts/phase3-qa.mjs`

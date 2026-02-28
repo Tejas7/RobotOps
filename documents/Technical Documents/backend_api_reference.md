@@ -60,6 +60,11 @@ Base URL: `http://localhost:4000/api`
 | POST | `/dashboard-configs/validate` | `config.write` | Returns `{valid, errors[]}` from schema validation. |
 | PATCH | `/dashboard-configs/:id` | `config.write` | Patch name/widgets/rules/applies_to. |
 | POST | `/dashboard-configs/:id/activate` | `config.write` | Single-active config switch for tenant. |
+| GET | `/vendor-site-maps` | `config.read` | Query: `site_id,vendor`. Lists map bindings + transform params. |
+| POST | `/vendor-site-maps` | `config.write` | Create map binding (`vendor_map_id` or `vendor_map_name` required). |
+| PATCH | `/vendor-site-maps/:id` | `config.write` | Update vendor map binding/transform fields. |
+| DELETE | `/vendor-site-maps/:id` | `config.write` | Delete binding by id. |
+| POST | `/vendor-site-maps/preview` | `config.write` | Transform preview utility for one or more sample points. |
 
 ## Analytics
 | Method | Path | Permission | Notes |
@@ -83,6 +88,23 @@ Canonical envelope required fields:
 - `source` (`source_type,source_id,vendor,protocol`)
 - `entity` (`entity_type=robot,robot_id`)
 - `payload` (validated by `message_type`)
+
+`robot_state.payload.pose` additive fields (Phase 3):
+- `vendor_map_id` (optional)
+- `vendor_map_name` (optional)
+- Existing fields retained: `floorplan_id,x,y,heading_degrees,confidence`
+
+Mapping resolution order for `robot_state.pose`:
+1. Match `vendor_map_id` (tenant/site/vendor scoped)
+2. Else match `vendor_map_name` (tenant/site/vendor scoped)
+3. Else fallback:
+   - passthrough only when incoming `pose.floorplan_id` is valid for tenant/site
+   - otherwise event processing fails and dead-letters
+
+Transform behavior when mapping matches:
+- order: `scale -> rotate(origin) -> translate`
+- heading: normalized to `[0,360)` after rotation
+- output floorplan: mapping `robotops_floorplan_id`
 
 ## Alerting and RBAC Phase 3 APIs
 | Method | Path | Permission | Notes |

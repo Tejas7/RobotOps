@@ -67,6 +67,7 @@ model Tenant {
   roleScopeOverrides RoleScopeOverride[]
   robotLastStates RobotLastState[]
   siteSettings SiteSetting[]
+  vendorSiteMaps VendorSiteMap[]
 }
 
 model User {
@@ -98,6 +99,7 @@ model Site {
   analyticsRollups SiteAnalyticsRollupHourly[]
   robotLastStates RobotLastState[]
   siteSettings SiteSetting[]
+  vendorSiteMaps VendorSiteMap[]
 }
 
 model Floorplan {
@@ -113,6 +115,7 @@ model Floorplan {
   tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   site                Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
   zones               Zone[]
+  vendorSiteMaps      VendorSiteMap[]
 }
 
 model Zone {
@@ -192,6 +195,30 @@ model SiteSetting {
   site                           Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
   @@id([tenantId, siteId])
+}
+
+model VendorSiteMap {
+  id                 String   @id
+  tenantId           String
+  siteId             String
+  vendor             String
+  vendorMapId        String?
+  vendorMapName      String?
+  robotopsFloorplanId String
+  scale              Float    @default(1)
+  rotationDegrees    Float    @default(0)
+  translateX         Float    @default(0)
+  translateY         Float    @default(0)
+  createdBy          String
+  updatedBy          String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site               Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  robotopsFloorplan  Floorplan @relation(fields: [robotopsFloorplanId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, siteId, vendor, vendorMapId])
+  @@index([tenantId, siteId, vendor, vendorMapName])
 }
 
 model RobotLastState {

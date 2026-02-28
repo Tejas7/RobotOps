@@ -59,6 +59,67 @@ export const robotLastStateQuerySchema = z.object({
   tag: z.string().min(1).optional()
 });
 
+const vendorMapKeySchema = z.string().trim().min(1);
+
+export const vendorSiteMapQuerySchema = z.object({
+  site_id: z.string().min(1).optional(),
+  vendor: z.string().trim().min(1).optional()
+});
+
+export const vendorSiteMapCreateSchema = z
+  .object({
+    site_id: z.string().min(1),
+    vendor: z.string().trim().min(1),
+    vendor_map_id: vendorMapKeySchema.optional(),
+    vendor_map_name: vendorMapKeySchema.optional(),
+    robotops_floorplan_id: z.string().min(1),
+    scale: z.coerce.number().positive().optional().default(1),
+    rotation_degrees: z.coerce.number().optional().default(0),
+    translate_x: z.coerce.number().optional().default(0),
+    translate_y: z.coerce.number().optional().default(0)
+  })
+  .superRefine((input, ctx) => {
+    if (!input.vendor_map_id && !input.vendor_map_name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["vendor_map_id"],
+        message: "Either vendor_map_id or vendor_map_name is required"
+      });
+    }
+  });
+
+export const vendorSiteMapPatchSchema = z
+  .object({
+    vendor: z.string().trim().min(1).optional(),
+    vendor_map_id: z.string().trim().min(1).nullable().optional(),
+    vendor_map_name: z.string().trim().min(1).nullable().optional(),
+    robotops_floorplan_id: z.string().min(1).optional(),
+    scale: z.coerce.number().positive().optional(),
+    rotation_degrees: z.coerce.number().optional(),
+    translate_x: z.coerce.number().optional(),
+    translate_y: z.coerce.number().optional()
+  })
+  .refine((input) => Object.keys(input).length > 0, "At least one field is required");
+
+export const vendorSiteMapPreviewSchema = z.object({
+  robotops_floorplan_id: z.string().min(1).optional(),
+  scale: z.coerce.number().positive(),
+  rotation_degrees: z.coerce.number(),
+  translate_x: z.coerce.number(),
+  translate_y: z.coerce.number(),
+  points: z
+    .array(
+      z.object({
+        x: z.number(),
+        y: z.number(),
+        heading_degrees: z.number().optional(),
+        confidence: z.number().min(0).max(1).optional()
+      })
+    )
+    .min(1)
+    .max(500)
+});
+
 export const savedViewCreateSchema = z.object({
   page: z.string().min(1),
   name: z.string().min(2),
@@ -158,6 +219,8 @@ export const robotStatePayloadSchema = z
     pose: z
       .object({
         floorplan_id: z.string().min(1).optional(),
+        vendor_map_id: z.string().trim().min(1).optional(),
+        vendor_map_name: z.string().trim().min(1).optional(),
         x: z.number(),
         y: z.number(),
         heading_degrees: z.number().optional().default(0),
@@ -383,6 +446,10 @@ export type CopilotMessageInput = z.infer<typeof copilotMessageSchema>;
 export type TelemetryQueryInput = z.infer<typeof telemetryQuerySchema>;
 export type RobotPathQueryInput = z.infer<typeof robotPathQuerySchema>;
 export type RobotLastStateQueryInput = z.infer<typeof robotLastStateQuerySchema>;
+export type VendorSiteMapQueryInput = z.infer<typeof vendorSiteMapQuerySchema>;
+export type VendorSiteMapCreateInput = z.infer<typeof vendorSiteMapCreateSchema>;
+export type VendorSiteMapPatchInput = z.infer<typeof vendorSiteMapPatchSchema>;
+export type VendorSiteMapPreviewInput = z.infer<typeof vendorSiteMapPreviewSchema>;
 export type SavedViewCreateInput = z.infer<typeof savedViewCreateSchema>;
 export type SavedViewPatchInput = z.infer<typeof savedViewPatchSchema>;
 export type RoleDefaultInput = z.infer<typeof roleDefaultSchema>;

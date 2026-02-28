@@ -17,7 +17,12 @@ import {
   roleDefaultSchema,
   savedViewCreateSchema,
   savedViewPatchSchema,
+  transformVendorPosePoint,
   telemetryQuerySchema,
+  vendorSiteMapCreateSchema,
+  vendorSiteMapPatchSchema,
+  vendorSiteMapPreviewSchema,
+  vendorSiteMapQuerySchema,
   type MissionCreateInput
 } from "@robotops/shared";
 import type { Permission } from "@robotops/shared";
@@ -82,6 +87,11 @@ interface RobotLastStateFilters {
   tag?: string;
 }
 
+interface VendorSiteMapFilters {
+  site_id?: string;
+  vendor?: string;
+}
+
 const DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS = 15;
 
 @Injectable()
@@ -144,6 +154,255 @@ export class OpsService {
       ...floorplan,
       zones: zones.filter((zone) => zone.floorplanId === floorplan.id)
     }));
+  }
+
+  async listVendorSiteMaps(tenantId: string, filters: VendorSiteMapFilters) {
+    const parsed = vendorSiteMapQuerySchema.safeParse(filters);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    return this.prisma.vendorSiteMap.findMany({
+      where: {
+        tenantId,
+        ...(parsed.data.site_id ? { siteId: parsed.data.site_id } : {}),
+        ...(parsed.data.vendor ? { vendor: this.normalizeVendorValue(parsed.data.vendor) } : {})
+      },
+      include: {
+        robotopsFloorplan: {
+          select: {
+            id: true,
+            name: true,
+            siteId: true
+          }
+        }
+      },
+      orderBy: [{ siteId: "asc" }, { vendor: "asc" }, { updatedAt: "desc" }]
+    });
+  }
+
+  async createVendorSiteMap(tenantId: string, user: RequestUser, input: unknown) {
+    const parsed = vendorSiteMapCreateSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    const vendor = this.normalizeVendorValue(parsed.data.vendor);
+    const vendorMapId = parsed.data.vendor_map_id ? parsed.data.vendor_map_id.trim().toLowerCase() : null;
+    const vendorMapName = parsed.data.vendor_map_name ? parsed.data.vendor_map_name.trim().toLowerCase() : null;
+
+    await this.assertFloorplanBelongsToSite(
+      tenantId,
+      parsed.data.site_id,
+      parsed.data.robotops_floorplan_id
+    );
+    await this.assertVendorSiteMapUniqueness(tenantId, {
+      siteId: parsed.data.site_id,
+      vendor,
+      vendorMapId,
+      vendorMapName
+    });
+
+    const created = await this.prisma.vendorSiteMap.create({
+      data: {
+        id: randomUUID(),
+        tenantId,
+        siteId: parsed.data.site_id,
+        vendor,
+        vendorMapId,
+        vendorMapName,
+        robotopsFloorplanId: parsed.data.robotops_floorplan_id,
+        scale: parsed.data.scale,
+        rotationDegrees: parsed.data.rotation_degrees,
+        translateX: parsed.data.translate_x,
+        translateY: parsed.data.translate_y,
+        createdBy: user.sub,
+        updatedBy: user.sub
+      },
+      include: {
+        robotopsFloorplan: {
+          select: {
+            id: true,
+            name: true,
+            siteId: true
+          }
+        }
+      }
+    });
+
+    await this.auditService.log(tenantId, {
+      action: "vendor_site_map.created",
+      resourceType: "config",
+      resourceId: created.id,
+      diff: {
+        before: null,
+        after: created
+      },
+      actorType: "user",
+      actorId: user.sub
+    });
+
+    return created;
+  }
+
+  async patchVendorSiteMap(tenantId: string, user: RequestUser, id: string, input: unknown) {
+    const parsed = vendorSiteMapPatchSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    const current = await this.prisma.vendorSiteMap.findFirst({
+      where: { tenantId, id }
+    });
+    if (!current) {
+      throw new NotFoundException("Vendor site map not found");
+    }
+
+    const nextVendor = parsed.data.vendor ? this.normalizeVendorValue(parsed.data.vendor) : current.vendor;
+    const nextSiteId = current.siteId;
+    const nextVendorMapId =
+      parsed.data.vendor_map_id === undefined
+        ? current.vendorMapId
+        : parsed.data.vendor_map_id === null
+          ? null
+          : parsed.data.vendor_map_id.trim().toLowerCase();
+    const nextVendorMapName =
+      parsed.data.vendor_map_name === undefined
+        ? current.vendorMapName
+        : parsed.data.vendor_map_name === null
+          ? null
+          : parsed.data.vendor_map_name.trim().toLowerCase();
+
+    if (!nextVendorMapId && !nextVendorMapName) {
+      throw new BadRequestException("Either vendor_map_id or vendor_map_name must remain set");
+    }
+
+    const nextFloorplanId = parsed.data.robotops_floorplan_id ?? current.robotopsFloorplanId;
+    await this.assertFloorplanBelongsToSite(tenantId, nextSiteId, nextFloorplanId);
+    await this.assertVendorSiteMapUniqueness(tenantId, {
+      siteId: nextSiteId,
+      vendor: nextVendor,
+      vendorMapId: nextVendorMapId,
+      vendorMapName: nextVendorMapName,
+      excludeId: current.id
+    });
+
+    const updated = await this.prisma.vendorSiteMap.update({
+      where: { id: current.id },
+      data: {
+        vendor: nextVendor,
+        vendorMapId: nextVendorMapId,
+        vendorMapName: nextVendorMapName,
+        robotopsFloorplanId: nextFloorplanId,
+        ...(parsed.data.scale !== undefined ? { scale: parsed.data.scale } : {}),
+        ...(parsed.data.rotation_degrees !== undefined ? { rotationDegrees: parsed.data.rotation_degrees } : {}),
+        ...(parsed.data.translate_x !== undefined ? { translateX: parsed.data.translate_x } : {}),
+        ...(parsed.data.translate_y !== undefined ? { translateY: parsed.data.translate_y } : {}),
+        updatedBy: user.sub
+      },
+      include: {
+        robotopsFloorplan: {
+          select: {
+            id: true,
+            name: true,
+            siteId: true
+          }
+        }
+      }
+    });
+
+    await this.auditService.log(tenantId, {
+      action: "vendor_site_map.updated",
+      resourceType: "config",
+      resourceId: updated.id,
+      diff: {
+        before: current,
+        after: updated
+      },
+      actorType: "user",
+      actorId: user.sub
+    });
+
+    return updated;
+  }
+
+  async deleteVendorSiteMap(tenantId: string, user: RequestUser, id: string) {
+    const current = await this.prisma.vendorSiteMap.findFirst({
+      where: { tenantId, id }
+    });
+    if (!current) {
+      throw new NotFoundException("Vendor site map not found");
+    }
+
+    await this.prisma.vendorSiteMap.delete({
+      where: { id: current.id }
+    });
+
+    await this.auditService.log(tenantId, {
+      action: "vendor_site_map.deleted",
+      resourceType: "config",
+      resourceId: id,
+      diff: {
+        before: current,
+        after: null
+      },
+      actorType: "user",
+      actorId: user.sub
+    });
+
+    return { deleted: true, id };
+  }
+
+  async previewVendorSiteMap(tenantId: string, input: unknown) {
+    const parsed = vendorSiteMapPreviewSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    if (parsed.data.robotops_floorplan_id) {
+      const floorplan = await this.prisma.floorplan.findFirst({
+        where: {
+          id: parsed.data.robotops_floorplan_id,
+          tenantId
+        },
+        select: { id: true }
+      });
+      if (!floorplan) {
+        throw new BadRequestException("robotops_floorplan_id is invalid for tenant");
+      }
+    }
+
+    const points = parsed.data.points.map((point) => {
+      const output = transformVendorPosePoint(
+        {
+          x: point.x,
+          y: point.y,
+          headingDegrees: point.heading_degrees,
+          confidence: point.confidence
+        },
+        {
+          scale: parsed.data.scale,
+          rotationDegrees: parsed.data.rotation_degrees,
+          translateX: parsed.data.translate_x,
+          translateY: parsed.data.translate_y
+        }
+      );
+
+      return {
+        input: point,
+        output: {
+          x: output.x,
+          y: output.y,
+          heading_degrees: output.headingDegrees,
+          confidence: output.confidence
+        }
+      };
+    });
+
+    return {
+      floorplan_id: parsed.data.robotops_floorplan_id ?? null,
+      points
+    };
   }
 
   async listRobots(tenantId: string, filters: RobotFilters) {
@@ -1610,6 +1869,71 @@ export class OpsService {
       reported_status: reportedStatus,
       is_offline_computed: isOfflineComputed
     };
+  }
+
+  private normalizeVendorValue(vendor: string) {
+    const normalized = vendor.trim().toLowerCase();
+    if (!normalized) {
+      throw new BadRequestException("vendor must be non-empty");
+    }
+    return normalized;
+  }
+
+  private async assertFloorplanBelongsToSite(tenantId: string, siteId: string, floorplanId: string) {
+    const floorplan = await this.prisma.floorplan.findFirst({
+      where: {
+        id: floorplanId,
+        tenantId,
+        siteId
+      },
+      select: { id: true }
+    });
+    if (!floorplan) {
+      throw new BadRequestException("robotops_floorplan_id must belong to the same tenant/site");
+    }
+  }
+
+  private async assertVendorSiteMapUniqueness(
+    tenantId: string,
+    input: {
+      siteId: string;
+      vendor: string;
+      vendorMapId: string | null;
+      vendorMapName: string | null;
+      excludeId?: string;
+    }
+  ) {
+    if (input.vendorMapId) {
+      const duplicateById = await this.prisma.vendorSiteMap.findFirst({
+        where: {
+          tenantId,
+          siteId: input.siteId,
+          vendor: input.vendor,
+          vendorMapId: input.vendorMapId,
+          ...(input.excludeId ? { id: { not: input.excludeId } } : {})
+        },
+        select: { id: true }
+      });
+      if (duplicateById) {
+        throw new BadRequestException("Duplicate vendor_map_id for tenant/site/vendor");
+      }
+    }
+
+    if (input.vendorMapName) {
+      const duplicateByName = await this.prisma.vendorSiteMap.findFirst({
+        where: {
+          tenantId,
+          siteId: input.siteId,
+          vendor: input.vendor,
+          vendorMapName: input.vendorMapName,
+          ...(input.excludeId ? { id: { not: input.excludeId } } : {})
+        },
+        select: { id: true }
+      });
+      if (duplicateByName) {
+        throw new BadRequestException("Duplicate vendor_map_name for tenant/site/vendor");
+      }
+    }
   }
 
   private optionalDate(raw: string | undefined, message: string) {
