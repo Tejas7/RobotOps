@@ -1,6 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const seedNow = Date.now();
+const secondsAgo = (seconds: number) => new Date(seedNow - seconds * 1000);
+const hoursAgo = (hours: number) => new Date(seedNow - hours * 60 * 60 * 1000);
 
 async function main() {
   await prisma.alertDelivery.deleteMany();
@@ -117,13 +120,13 @@ async function main() {
       {
         tenantId: "t1",
         siteId: "s1",
-        robotOfflineAfterSeconds: 15,
+        robotOfflineAfterSeconds: 300,
         robotStatePublishPeriodSeconds: 2
       },
       {
         tenantId: "t1",
         siteId: "s2",
-        robotOfflineAfterSeconds: 15,
+        robotOfflineAfterSeconds: 300,
         robotStatePublishPeriodSeconds: 2
       }
     ]
@@ -411,7 +414,7 @@ async function main() {
         tags: ["amr", "picker"],
         status: "online",
         batteryPercent: 76,
-        lastSeenAt: new Date("2026-02-26T23:40:00Z"),
+        lastSeenAt: secondsAgo(30),
         floorplanId: "f1",
         x: 140,
         y: 58,
@@ -441,7 +444,7 @@ async function main() {
         tags: ["agv", "heavy"],
         status: "degraded",
         batteryPercent: 34,
-        lastSeenAt: new Date("2026-02-26T23:39:30Z"),
+        lastSeenAt: secondsAgo(75),
         floorplanId: "f1",
         x: 255,
         y: 120,
@@ -471,7 +474,7 @@ async function main() {
         tags: ["amr", "inventory"],
         status: "offline",
         batteryPercent: 12,
-        lastSeenAt: new Date("2026-02-26T19:20:00Z"),
+        lastSeenAt: hoursAgo(5),
         floorplanId: "f1",
         x: 92,
         y: 52,
@@ -501,7 +504,7 @@ async function main() {
         tags: ["agv", "maintenance"],
         status: "maintenance",
         batteryPercent: 88,
-        lastSeenAt: new Date("2026-02-26T22:45:00Z"),
+        lastSeenAt: secondsAgo(95),
         floorplanId: "f1b",
         x: 68,
         y: 84,
@@ -531,7 +534,7 @@ async function main() {
         tags: ["agv", "safety_watch"],
         status: "emergency_stop",
         batteryPercent: 54,
-        lastSeenAt: new Date("2026-02-26T23:33:00Z"),
+        lastSeenAt: secondsAgo(20),
         floorplanId: "f1",
         x: 206,
         y: 64,
@@ -561,7 +564,7 @@ async function main() {
         tags: ["amr", "picker", "rush_lane"],
         status: "online",
         batteryPercent: 64,
-        lastSeenAt: new Date("2026-02-26T23:39:40Z"),
+        lastSeenAt: secondsAgo(45),
         floorplanId: "f1",
         x: 176,
         y: 48,
@@ -591,7 +594,7 @@ async function main() {
         tags: ["amr", "scanner"],
         status: "degraded",
         batteryPercent: 27,
-        lastSeenAt: new Date("2026-02-26T23:37:20Z"),
+        lastSeenAt: secondsAgo(110),
         floorplanId: "f1",
         x: 232,
         y: 114,
@@ -621,7 +624,7 @@ async function main() {
         tags: ["agv", "heavy", "tow"],
         status: "offline",
         batteryPercent: 5,
-        lastSeenAt: new Date("2026-02-26T17:10:00Z"),
+        lastSeenAt: hoursAgo(8),
         floorplanId: "f1b",
         x: 286,
         y: 146,
@@ -651,7 +654,7 @@ async function main() {
         tags: ["amr", "scanner", "montreal"],
         status: "online",
         batteryPercent: 72,
-        lastSeenAt: new Date("2026-02-26T23:39:50Z"),
+        lastSeenAt: secondsAgo(25),
         floorplanId: "f2",
         x: 96,
         y: 148,
@@ -681,7 +684,7 @@ async function main() {
         tags: ["amr", "picker", "montreal"],
         status: "maintenance",
         batteryPercent: 81,
-        lastSeenAt: new Date("2026-02-26T22:05:00Z"),
+        lastSeenAt: secondsAgo(130),
         floorplanId: "f2",
         x: 208,
         y: 96,
@@ -711,7 +714,7 @@ async function main() {
         tags: ["agv", "heavy", "montreal"],
         status: "degraded",
         batteryPercent: 31,
-        lastSeenAt: new Date("2026-02-26T23:34:00Z"),
+        lastSeenAt: secondsAgo(80),
         floorplanId: "f2",
         x: 244,
         y: 118,
@@ -741,7 +744,7 @@ async function main() {
         tags: ["amr", "inventory", "montreal"],
         status: "offline",
         batteryPercent: 9,
-        lastSeenAt: new Date("2026-02-26T16:45:00Z"),
+        lastSeenAt: hoursAgo(6),
         floorplanId: "f2",
         x: 166,
         y: 54,

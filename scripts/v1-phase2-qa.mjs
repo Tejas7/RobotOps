@@ -6,6 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET ?? "robotops-dev-secret";
 const TENANT_ID = "t1";
 const SITE_ID = "s1";
 const ROBOT_ID = "r6";
+const STALE_ROBOT_ID = "r3";
 const MISSION_ID = "m2";
 
 function assert(condition, message) {
@@ -137,7 +138,11 @@ async function run() {
 
     const staleEnvelope = baseEnvelope({
       message_type: "robot_state",
-      timestamp: new Date(Date.now() - 90_000).toISOString(),
+      timestamp: new Date(Date.now() - 600_000).toISOString(),
+      entity: {
+        entity_type: "robot",
+        robot_id: STALE_ROBOT_ID
+      },
       payload: {
         status: "online",
         battery_percent: 66,
@@ -168,7 +173,7 @@ async function run() {
 
     let staleState = null;
     await waitFor(async () => {
-      staleState = await fetchLastStateByRobot(token);
+      staleState = await fetchLastStateByRobot(token, STALE_ROBOT_ID);
       if (!staleState) {
         return false;
       }
