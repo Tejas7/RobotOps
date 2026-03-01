@@ -448,6 +448,86 @@ export interface CanonicalIngestResponse {
 
 export type TelemetryIngestResponse = CanonicalIngestResponse;
 
+export interface RawCaptureEntry {
+  timestamp: string;
+  raw_payload: Record<string, unknown>;
+  raw_headers?: Record<string, string>;
+  raw_path?: string;
+  sequence_hint?: number;
+  capture_index: number;
+}
+
+export interface RawCaptureManifest {
+  capture_id: string;
+  tenant_id: string;
+  vendor: string;
+  site_id: string;
+  adapter_name: string;
+  source_endpoint: string;
+  start_time: string;
+  end_time: string;
+  capture_version: number;
+  entry_count: number;
+}
+
+export interface AdapterHealthSnapshot {
+  status: "healthy" | "degraded" | "error" | "unknown";
+  lastSuccessAt?: string | null;
+  lastErrorAt?: string | null;
+  lastError?: string | null;
+}
+
+export interface PollingAdapter {
+  initialize(config: Record<string, unknown>): Promise<void> | void;
+  poll(): Promise<RawCaptureEntry[]>;
+  health(): Promise<AdapterHealthSnapshot>;
+}
+
+export interface StreamingAdapter {
+  initialize(config: Record<string, unknown>): Promise<void> | void;
+  connect(): Promise<void> | void;
+  onMessage(rawPayload: Record<string, unknown>, context?: Record<string, unknown>): Promise<CanonicalEnvelope[]>;
+  disconnect(): Promise<void> | void;
+  health(): Promise<AdapterHealthSnapshot>;
+}
+
+export interface AdapterCaptureListItem extends RawCaptureManifest {}
+
+export interface AdapterReplayRunSummary {
+  id: string;
+  captureId: string;
+  status: "started" | "running" | "completed" | "failed" | "canceled";
+  startedAt: string;
+  endedAt: string | null;
+  acceptedCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  options: Record<string, unknown>;
+  errorSummary: string | null;
+}
+
+export interface AdapterReplayRunEventItem {
+  id: string;
+  runId: string;
+  messageId: string | null;
+  messageType: CanonicalMessageType | null;
+  result: "accepted" | "duplicate" | "failed";
+  error: string | null;
+  createdAt: string;
+}
+
+export interface AdapterHealthResponse {
+  adapterName: string;
+  vendor: string;
+  siteId: string;
+  status: "healthy" | "degraded" | "error" | "unknown";
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  lastRunId: string | null;
+  updatedAt: string;
+}
+
 export interface RobotStateOrderingDecision {
   accepted: boolean;
   reason: "accepted" | "older_than_allowed_lateness" | "sequence_regression" | "same_sequence_older_timestamp" | "timestamp_regression";

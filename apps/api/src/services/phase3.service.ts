@@ -1,10 +1,20 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Prisma } from "@prisma/client";
 import {
   DEPRECATED_PERMISSIONS,
   PERMISSIONS,
   PERMISSION_ALIASES,
+  sortCaptureEntriesDeterministically,
+  adapterCaptureQuerySchema,
+  adapterCaptureRecordRequestSchema,
+  adapterReplayRequestSchema,
+  rawCaptureEntrySchema,
+  rawCaptureManifestSchema,
   ROBOT_EVENT_DEDUPE_WINDOW_SECONDS,
   ROBOT_STATE_ALLOWED_LATENESS_SECONDS,
   ROLES,
@@ -22,6 +32,11 @@ import {
   transformVendorPosePoint,
   permissionsForRole,
   roleScopeOverridePatchSchema,
+  type AdapterCaptureQueryInput,
+  type AdapterCaptureRecordRequestInput,
+  type AdapterReplayRequestInput,
+  type RawCaptureEntry,
+  type RawCaptureManifest,
   type DedupeWindowDecision,
   type CanonicalEnvelopeInput,
   type RobotStateOrderingDecision,
@@ -70,6 +85,68 @@ interface IngestionHandlerResult {
   reason?: string;
 }
 
+interface AdapterCaptureFilters {
+  site_id?: string;
+  vendor?: string;
+}
+
+interface AdapterHealthSnapshot {
+  status: "healthy" | "degraded" | "error" | "unknown";
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  lastError: string | null;
+}
+
+interface AdapterRecord {
+  timestamp?: string;
+  rawPayload: Record<string, unknown>;
+  rawHeaders?: Record<string, string>;
+  rawPath?: string;
+  sequenceHint?: number;
+}
+
+interface AdapterToCanonicalContext {
+  tenantId: string;
+  siteId: string;
+  vendor: string;
+  adapterName: string;
+  manifest: RawCaptureManifest;
+  captureIndex: number;
+  fallbackTimestamp: string;
+}
+
+interface AdapterRuntimeBase {
+  vendor: string;
+  adapterName: string;
+  initialize(config: Record<string, unknown>): Promise<void>;
+  health(): Promise<AdapterHealthSnapshot>;
+  toCanonical(rawPayload: Record<string, unknown>, context: AdapterToCanonicalContext): Promise<CanonicalEnvelopeInput[]>;
+}
+
+interface PollingAdapterRuntime extends AdapterRuntimeBase {
+  kind: "polling";
+  poll(context: { tick: number; captureId: string; siteId: string; vendor: string }): Promise<AdapterRecord[]>;
+}
+
+interface StreamingAdapterRuntime extends AdapterRuntimeBase {
+  kind: "streaming";
+  connect(): Promise<void>;
+  sample(context: { tick: number; captureId: string; siteId: string; vendor: string }): Promise<AdapterRecord[]>;
+  onMessage(rawPayload: Record<string, unknown>, context?: Record<string, unknown>): Promise<CanonicalEnvelopeInput[]>;
+  disconnect(): Promise<void>;
+}
+
+type AdapterRuntime = PollingAdapterRuntime | StreamingAdapterRuntime;
+
+type ReplayMode = "logical_timestamp_scaling" | "wall_clock_pacing" | "hybrid";
+type ReplayTimestampPolicy = "preserve" | "rewrite_to_now";
+
+interface ScheduledReplayEntry {
+  entry: RawCaptureEntry;
+  effectiveTimestamp: Date;
+  sleepBeforeMs: number;
+}
+
 const SEVERITY_ORDER: Record<string, number> = {
   info: 1,
   warning: 2,
@@ -78,12 +155,14 @@ const SEVERITY_ORDER: Record<string, number> = {
 };
 
 const DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS = 15;
+const CAPTURE_FORMAT_VERSION = 1;
 
 @Injectable()
 export class Phase3Service implements OnModuleInit, OnModuleDestroy {
   private ingestionTimer?: NodeJS.Timeout;
   private rollupTimer?: NodeJS.Timeout;
   private alertTimer?: NodeJS.Timeout;
+  private readonly adapterCaptureRoot = path.join(process.cwd(), ".data", "adapter-captures");
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -1232,6 +1311,623 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         freshnessSeconds
       },
       timescale
+    };
+  }
+
+  async listAdapterHealth(tenantId: string) {
+    const rows = await this.prisma.adapterHealthState.findMany({
+      where: { tenantId },
+      orderBy: [{ updatedAt: "desc" }, { vendor: "asc" }, { adapterName: "asc" }]
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenant_id: row.tenantId,
+      site_id: row.siteId,
+      vendor: row.vendor,
+      adapter_name: row.adapterName,
+      status: row.status,
+      last_success_at: row.lastSuccessAt?.toISOString() ?? null,
+      last_error_at: row.lastErrorAt?.toISOString() ?? null,
+      last_error: row.lastError,
+      last_run_id: row.lastRunId,
+      updated_at: row.updatedAt.toISOString()
+    }));
+  }
+
+  async listAdapterCaptures(tenantId: string, rawFilters: unknown) {
+    const parsed = adapterCaptureQuerySchema.safeParse(rawFilters);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    const manifests = await this.loadCaptureManifests(tenantId);
+    const vendorFilter = parsed.data.vendor?.trim().toLowerCase();
+
+    return manifests
+      .filter((manifest) => !vendorFilter || manifest.vendor.toLowerCase() === vendorFilter)
+      .filter((manifest) => !parsed.data.site_id || manifest.site_id === parsed.data.site_id)
+      .sort((left, right) => new Date(right.end_time).getTime() - new Date(left.end_time).getTime());
+  }
+
+  async recordAdapterCapture(tenantId: string, user: RequestUser, input: unknown) {
+    const parsed = adapterCaptureRecordRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    await this.ensureSiteBelongsToTenant(tenantId, parsed.data.site_id);
+    const runtime = this.getAdapterRuntime(parsed.data.vendor, parsed.data.adapter_name);
+
+    const captureId = parsed.data.capture_id?.trim() || randomUUID();
+    const captureDir = this.getCaptureDir(captureId);
+    const entriesPath = this.getCaptureEntriesPath(captureId);
+    const manifestPath = this.getCaptureManifestPath(captureId);
+    const startedAt = new Date();
+    const startedAtIso = startedAt.toISOString();
+
+    await mkdir(this.adapterCaptureRoot, { recursive: true });
+    try {
+      await mkdir(captureDir, { recursive: false });
+    } catch (error) {
+      throw new BadRequestException(`Capture id already exists: ${captureId}`);
+    }
+    await writeFile(entriesPath, "", "utf8");
+    await runtime.initialize({
+      tenant_id: tenantId,
+      site_id: parsed.data.site_id,
+      vendor: parsed.data.vendor,
+      adapter_name: parsed.data.adapter_name,
+      requested_by: user.sub
+    });
+
+    let entryCount = 0;
+    let firstTimestamp: string | null = null;
+    let lastTimestamp: string | null = null;
+
+    try {
+      if (runtime.kind === "streaming") {
+        await runtime.connect();
+      }
+
+      const durationMs = parsed.data.duration_seconds * 1000;
+      const recordStartMs = Date.now();
+      let tick = 0;
+
+      while (Date.now() - recordStartMs < durationMs) {
+        const tickStartedMs = Date.now();
+        const records =
+          runtime.kind === "polling"
+            ? await runtime.poll({
+                tick,
+                captureId,
+                siteId: parsed.data.site_id,
+                vendor: parsed.data.vendor
+              })
+            : await runtime.sample({
+                tick,
+                captureId,
+                siteId: parsed.data.site_id,
+                vendor: parsed.data.vendor
+              });
+
+        for (const record of records) {
+          const fallbackTimestamp = new Date(startedAt.getTime() + tick * 1000).toISOString();
+          const parsedEntry = rawCaptureEntrySchema.parse({
+            timestamp: record.timestamp ?? fallbackTimestamp,
+            raw_payload: record.rawPayload,
+            raw_headers: record.rawHeaders,
+            raw_path: record.rawPath,
+            sequence_hint: record.sequenceHint,
+            capture_index: entryCount
+          });
+          await appendFile(entriesPath, `${JSON.stringify(parsedEntry)}\n`, "utf8");
+
+          if (!firstTimestamp || new Date(parsedEntry.timestamp).getTime() < new Date(firstTimestamp).getTime()) {
+            firstTimestamp = parsedEntry.timestamp;
+          }
+          if (!lastTimestamp || new Date(parsedEntry.timestamp).getTime() > new Date(lastTimestamp).getTime()) {
+            lastTimestamp = parsedEntry.timestamp;
+          }
+
+          entryCount += 1;
+        }
+
+        tick += 1;
+        const tickElapsedMs = Date.now() - tickStartedMs;
+        if (tickElapsedMs < 1000) {
+          await delay(1000 - tickElapsedMs);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.updateAdapterHealthState(
+        tenantId,
+        parsed.data.site_id,
+        parsed.data.vendor,
+        parsed.data.adapter_name,
+        "error",
+        {
+          lastErrorAt: new Date(),
+          lastError: message
+        }
+      );
+      throw new BadRequestException(`Capture recording failed: ${message}`);
+    } finally {
+      if (runtime.kind === "streaming") {
+        await runtime.disconnect().catch(() => undefined);
+      }
+    }
+
+    const manifest = rawCaptureManifestSchema.parse({
+      capture_id: captureId,
+      tenant_id: tenantId,
+      vendor: parsed.data.vendor.trim(),
+      site_id: parsed.data.site_id,
+      adapter_name: parsed.data.adapter_name.trim(),
+      source_endpoint: parsed.data.source_endpoint,
+      start_time: firstTimestamp ?? startedAtIso,
+      end_time: lastTimestamp ?? new Date().toISOString(),
+      capture_version: CAPTURE_FORMAT_VERSION,
+      entry_count: entryCount
+    });
+
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const health = await runtime.health().catch(() => ({
+      status: "healthy" as const,
+      lastSuccessAt: new Date(),
+      lastErrorAt: null,
+      lastError: null
+    }));
+    await this.updateAdapterHealthState(
+      tenantId,
+      parsed.data.site_id,
+      parsed.data.vendor,
+      parsed.data.adapter_name,
+      health.status,
+      {
+        lastSuccessAt: health.lastSuccessAt ?? new Date(),
+        lastErrorAt: health.lastErrorAt,
+        lastError: health.lastError
+      }
+    );
+
+    await this.auditService.log(tenantId, {
+      action: "adapter.capture.recorded",
+      resourceType: "integration",
+      resourceId: captureId,
+      diff: {
+        before: null,
+        after: manifest
+      },
+      actorType: "user",
+      actorId: user.sub
+    });
+
+    return {
+      capture: manifest
+    };
+  }
+
+  async createAdapterReplay(tenantId: string, user: RequestUser, input: unknown) {
+    const parsed = adapterReplayRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.flatten());
+    }
+
+    const manifest = await this.readCaptureManifestForTenant(parsed.data.capture_id, tenantId);
+    await this.ensureSiteBelongsToTenant(tenantId, manifest.site_id);
+    const runId = parsed.data.run_id ?? randomUUID();
+
+    if (parsed.data.run_id) {
+      const existing = await this.prisma.adapterReplayRun.findUnique({ where: { id: parsed.data.run_id } });
+      if (existing) {
+        if (existing.tenantId !== tenantId) {
+          throw new NotFoundException("Replay run not found");
+        }
+        return {
+          run: {
+            id: existing.id,
+            capture_id: existing.captureId,
+            status: existing.status,
+            started_at: existing.startedAt.toISOString(),
+            ended_at: existing.endedAt?.toISOString() ?? null,
+            accepted_count: existing.acceptedCount,
+            duplicate_count: existing.duplicateCount,
+            failed_count: existing.failedCount,
+            options: existing.options,
+            error_summary: existing.errorSummary
+          },
+          idempotent_reused: true
+        };
+      }
+    }
+
+    const replayMode = parsed.data.replay_mode;
+    const timestampPolicy: ReplayTimestampPolicy =
+      parsed.data.timestamp_policy ?? (replayMode === "wall_clock_pacing" ? "preserve" : "rewrite_to_now");
+    const shouldSleep = parsed.data.sleep ?? (replayMode === "wall_clock_pacing" || replayMode === "hybrid");
+    const startAt = parsed.data.start_at ? new Date(parsed.data.start_at) : new Date();
+    const runtimeConfig = {
+      tenant_id: tenantId,
+      site_id: manifest.site_id,
+      vendor: manifest.vendor,
+      adapter_name: manifest.adapter_name,
+      replay: true,
+      requested_by: user.sub
+    };
+
+    const run = await this.prisma.adapterReplayRun.create({
+      data: {
+        id: runId,
+        tenantId,
+        captureId: parsed.data.capture_id,
+        status: "started",
+        startedAt: new Date(),
+        options: this.toJson({
+          replay_speed_multiplier: parsed.data.replay_speed_multiplier,
+          deterministic_ordering: parsed.data.deterministic_ordering,
+          replay_mode: replayMode,
+          sleep: shouldSleep,
+          timestamp_policy: timestampPolicy,
+          start_at: startAt.toISOString(),
+          time_window_filter: parsed.data.time_window_filter ?? null,
+          validation_only: parsed.data.validation_only,
+          return_envelopes: parsed.data.return_envelopes,
+          metadata: {
+            adapter_name: manifest.adapter_name,
+            adapter_version: process.env.ADAPTER_VERSION ?? "demo-v1",
+            git_sha: process.env.GIT_SHA ?? null,
+            environment: process.env.NODE_ENV ?? "development",
+            machine_id: process.env.MACHINE_ID ?? hostname(),
+            source_endpoint: manifest.source_endpoint,
+            config_snapshot: runtimeConfig
+          }
+        }),
+        createdBy: user.sub
+      }
+    });
+
+    let runtime: AdapterRuntime | null = null;
+    let acceptedCount = 0;
+    let duplicateCount = 0;
+    let failedCount = 0;
+    const replayErrors: string[] = [];
+    const producedEnvelopes: CanonicalEnvelopeInput[] = [];
+    let lastProcessedCaptureIndex: number | null = null;
+    let step = "initialize";
+
+    try {
+      runtime = this.getAdapterRuntime(manifest.vendor, manifest.adapter_name);
+      await runtime.initialize(runtimeConfig);
+
+      step = "connect";
+      if (runtime.kind === "streaming") {
+        await runtime.connect();
+      }
+
+      await this.prisma.adapterReplayRun.update({
+        where: { id: run.id },
+        data: {
+          status: "running"
+        }
+      });
+
+      step = "prepare_window";
+      const from = parsed.data.time_window_filter?.from ? new Date(parsed.data.time_window_filter.from) : null;
+      const to = parsed.data.time_window_filter?.to ? new Date(parsed.data.time_window_filter.to) : null;
+      if (from && to && from.getTime() > to.getTime()) {
+        throw new BadRequestException("time_window_filter.from must be less than or equal to time_window_filter.to");
+      }
+
+      step = "load_capture_entries";
+      let entries = await this.readCaptureEntries(parsed.data.capture_id);
+      if (from || to) {
+        entries = entries.filter((entry) => {
+          const ts = new Date(entry.timestamp);
+          if (from && ts.getTime() < from.getTime()) {
+            return false;
+          }
+          if (to && ts.getTime() > to.getTime()) {
+            return false;
+          }
+          return true;
+        });
+      }
+      if (parsed.data.deterministic_ordering) {
+        entries = sortCaptureEntriesDeterministically(entries);
+      }
+      const scheduledEntries = this.scheduleReplayEntries(entries, {
+        mode: replayMode,
+        speedMultiplier: parsed.data.replay_speed_multiplier,
+        startAt,
+        rewriteToNow: timestampPolicy === "rewrite_to_now"
+      });
+
+      const replayActor: RequestUser = {
+        sub: `adapter-replay:${run.id}`,
+        email: "adapter-replay@robotops.local",
+        name: "Adapter Replay",
+        tenantId,
+        role: "Engineer",
+        permissions: []
+      };
+
+      for (const scheduled of scheduledEntries) {
+        const entry = scheduled.entry;
+        lastProcessedCaptureIndex = entry.capture_index;
+        if (shouldSleep && scheduled.sleepBeforeMs > 0) {
+          await delay(scheduled.sleepBeforeMs);
+        }
+
+        let envelopes: CanonicalEnvelopeInput[] = [];
+        step = `transform:${entry.capture_index}`;
+        try {
+          const context: AdapterToCanonicalContext = {
+            tenantId,
+            siteId: manifest.site_id,
+            vendor: manifest.vendor,
+            adapterName: manifest.adapter_name,
+            manifest,
+            captureIndex: entry.capture_index,
+            fallbackTimestamp: scheduled.effectiveTimestamp.toISOString()
+          };
+          envelopes =
+            runtime.kind === "streaming"
+              ? await runtime.onMessage(entry.raw_payload, {
+                  tenant_id: tenantId,
+                  site_id: manifest.site_id,
+                  vendor: manifest.vendor,
+                  adapter_name: manifest.adapter_name,
+                  capture_id: manifest.capture_id,
+                  capture_index: entry.capture_index,
+                  timestamp: scheduled.effectiveTimestamp.toISOString()
+                })
+              : await runtime.toCanonical(entry.raw_payload, context);
+        } catch (error) {
+          failedCount += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          replayErrors.push(message);
+          await this.prisma.adapterReplayRunEvent.create({
+            data: {
+              id: randomUUID(),
+              tenantId,
+              runId: run.id,
+              messageId: null,
+              messageType: null,
+              result: "failed",
+              error: message
+            }
+          });
+          continue;
+        }
+
+        const replayReadyEnvelopes = envelopes.map((envelope, envelopeIndex) =>
+          this.applyReplayTimingToEnvelope(envelope, scheduled.effectiveTimestamp, replayMode, timestampPolicy, envelopeIndex)
+        );
+
+        for (const envelope of replayReadyEnvelopes) {
+          const parsedEnvelope = canonicalEnvelopeSchema.safeParse(envelope);
+          if (!parsedEnvelope.success) {
+            failedCount += 1;
+            const error = parsedEnvelope.error.issues.map((issue) => issue.message).join("; ");
+            replayErrors.push(error);
+            await this.prisma.adapterReplayRunEvent.create({
+              data: {
+                id: randomUUID(),
+                tenantId,
+                runId: run.id,
+                messageId: envelope.message_id ?? null,
+                messageType: null,
+                result: "failed",
+                error
+              }
+            });
+            continue;
+          }
+
+          const validEnvelope = parsedEnvelope.data;
+          if (validEnvelope.tenant_id !== tenantId) {
+            const error = "Replay envelope tenant mismatch";
+            failedCount += 1;
+            replayErrors.push(error);
+            await this.prisma.adapterReplayRunEvent.create({
+              data: {
+                id: randomUUID(),
+                tenantId,
+                runId: run.id,
+                messageId: validEnvelope.message_id,
+                messageType: validEnvelope.message_type,
+                result: "failed",
+                error
+              }
+            });
+            continue;
+          }
+
+          if (parsed.data.return_envelopes) {
+            producedEnvelopes.push(validEnvelope);
+          }
+
+          if (parsed.data.validation_only) {
+            acceptedCount += 1;
+            await this.prisma.adapterReplayRunEvent.create({
+              data: {
+                id: randomUUID(),
+                tenantId,
+                runId: run.id,
+                messageId: validEnvelope.message_id,
+                messageType: validEnvelope.message_type,
+                result: "accepted",
+                error: null
+              }
+            });
+            continue;
+          }
+
+          try {
+            const ingestResult = await this.ingestTelemetry(tenantId, replayActor, validEnvelope);
+            const resultType = ingestResult.duplicate > 0 ? "duplicate" : "accepted";
+            if (resultType === "duplicate") {
+              duplicateCount += 1;
+            } else {
+              acceptedCount += 1;
+            }
+            await this.prisma.adapterReplayRunEvent.create({
+              data: {
+                id: randomUUID(),
+                tenantId,
+                runId: run.id,
+                messageId: validEnvelope.message_id,
+                messageType: validEnvelope.message_type,
+                result: resultType,
+                error: null
+              }
+            });
+          } catch (error) {
+            failedCount += 1;
+            const message = error instanceof Error ? error.message : String(error);
+            replayErrors.push(message);
+            await this.prisma.adapterReplayRunEvent.create({
+              data: {
+                id: randomUUID(),
+                tenantId,
+                runId: run.id,
+                messageId: validEnvelope.message_id,
+                messageType: validEnvelope.message_type,
+                result: "failed",
+                error: message
+              }
+            });
+          }
+        }
+      }
+
+      const status = failedCount > 0 ? "failed" : "completed";
+      const endedAt = new Date();
+      const updatedRun = await this.prisma.adapterReplayRun.update({
+        where: { id: run.id },
+        data: {
+          status,
+          endedAt,
+          acceptedCount,
+          duplicateCount,
+          failedCount,
+          errorSummary: replayErrors.length > 0 ? replayErrors.slice(0, 3).join(" | ") : null
+        }
+      });
+
+      const health = await runtime.health().catch(() => null);
+      await this.updateAdapterHealthState(
+        tenantId,
+        manifest.site_id,
+        manifest.vendor,
+        manifest.adapter_name,
+        status === "failed" ? "error" : (health?.status ?? "healthy"),
+        {
+          lastRunId: updatedRun.id,
+          lastSuccessAt: status === "completed" ? (health?.lastSuccessAt ?? endedAt) : undefined,
+          lastErrorAt: status === "failed" ? (health?.lastErrorAt ?? endedAt) : undefined,
+          lastError: status === "failed" ? replayErrors[0] ?? health?.lastError ?? "Replay failed" : null
+        }
+      );
+
+      await this.auditService.log(tenantId, {
+        action: "adapter.replay.completed",
+        resourceType: "integration",
+        resourceId: updatedRun.id,
+        diff: {
+          before: null,
+          after: {
+            capture_id: manifest.capture_id,
+            status,
+            accepted_count: acceptedCount,
+            duplicate_count: duplicateCount,
+            failed_count: failedCount
+          }
+        },
+        actorType: "user",
+        actorId: user.sub
+      });
+
+      return {
+        run: this.formatAdapterReplayRunSummary(updatedRun),
+        ...(parsed.data.return_envelopes ? { envelopes: producedEnvelopes } : {})
+      };
+    } catch (error) {
+      const endedAt = new Date();
+      const message = error instanceof Error ? error.message : String(error);
+      const failureArtifact = {
+        error_code: "ADAPTER_REPLAY_FAILED",
+        error_message: message,
+        step,
+        last_processed_entry_index: lastProcessedCaptureIndex,
+        suggested_remediation: "Verify adapter configuration and capture integrity before retry.",
+        stack_trace_optional: error instanceof Error ? error.stack ?? null : null
+      };
+      await this.prisma.adapterReplayRun.update({
+        where: { id: run.id },
+        data: {
+          status: "failed",
+          endedAt,
+          acceptedCount,
+          duplicateCount,
+          failedCount: failedCount + 1,
+          errorSummary: `${message} (step: ${step})`
+        }
+      });
+      await this.prisma.adapterReplayRunEvent.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          runId: run.id,
+          messageId: null,
+          messageType: null,
+          result: "failed",
+          error: JSON.stringify(failureArtifact).slice(0, 4000)
+        }
+      });
+      await this.updateAdapterHealthState(tenantId, manifest.site_id, manifest.vendor, manifest.adapter_name, "error", {
+        lastRunId: run.id,
+        lastErrorAt: endedAt,
+        lastError: message
+      });
+      throw new BadRequestException(`Replay failed: ${message}`);
+    } finally {
+      if (runtime && runtime.kind === "streaming") {
+        await runtime.disconnect().catch(() => undefined);
+      }
+    }
+  }
+
+  async getAdapterReplayRun(tenantId: string, id: string) {
+    const run = await this.prisma.adapterReplayRun.findFirst({
+      where: {
+        id,
+        tenantId
+      },
+      include: {
+        events: {
+          orderBy: { createdAt: "asc" },
+          take: 500
+        }
+      }
+    });
+    if (!run) {
+      throw new NotFoundException("Replay run not found");
+    }
+
+    return {
+      ...this.formatAdapterReplayRunSummary(run),
+      events: run.events.map((event) => ({
+        id: event.id,
+        message_id: event.messageId,
+        message_type: event.messageType,
+        result: event.result,
+        error: event.error,
+        created_at: event.createdAt.toISOString()
+      }))
     };
   }
 
@@ -2686,6 +3382,633 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
     }
 
     return true;
+  }
+
+  private formatAdapterReplayRunSummary(run: {
+    id: string;
+    captureId: string;
+    status: string;
+    startedAt: Date;
+    endedAt: Date | null;
+    acceptedCount: number;
+    duplicateCount: number;
+    failedCount: number;
+    options: Prisma.JsonValue;
+    errorSummary: string | null;
+  }) {
+    return {
+      id: run.id,
+      capture_id: run.captureId,
+      status: run.status,
+      started_at: run.startedAt.toISOString(),
+      ended_at: run.endedAt?.toISOString() ?? null,
+      accepted_count: run.acceptedCount,
+      duplicate_count: run.duplicateCount,
+      failed_count: run.failedCount,
+      options: run.options,
+      error_summary: run.errorSummary
+    };
+  }
+
+  private scaleReplayDeltaMs(deltaMs: number, speedMultiplier: number) {
+    if (speedMultiplier <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.floor(deltaMs / speedMultiplier));
+  }
+
+  private scheduleReplayEntries(
+    entries: RawCaptureEntry[],
+    input: {
+      mode: ReplayMode;
+      speedMultiplier: number;
+      startAt: Date;
+      rewriteToNow: boolean;
+    }
+  ): ScheduledReplayEntry[] {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    const baseOriginalMs = new Date(entries[0].timestamp).getTime();
+    let previousOriginalMs = baseOriginalMs;
+    return entries.map((entry, index) => {
+      const currentOriginalMs = new Date(entry.timestamp).getTime();
+      const fromStartMs = Math.max(0, currentOriginalMs - baseOriginalMs);
+      const effectiveMs =
+        input.mode === "wall_clock_pacing" && !input.rewriteToNow
+          ? currentOriginalMs
+          : input.startAt.getTime() + this.scaleReplayDeltaMs(fromStartMs, input.speedMultiplier);
+      const gapMs = index === 0 ? 0 : Math.max(0, currentOriginalMs - previousOriginalMs);
+      previousOriginalMs = currentOriginalMs;
+
+      return {
+        entry,
+        effectiveTimestamp: new Date(effectiveMs),
+        sleepBeforeMs: this.scaleReplayDeltaMs(gapMs, input.speedMultiplier)
+      };
+    });
+  }
+
+  private applyReplayTimingToEnvelope(
+    envelope: CanonicalEnvelopeInput,
+    effectiveTimestamp: Date,
+    mode: ReplayMode,
+    timestampPolicy: ReplayTimestampPolicy,
+    envelopeIndex: number
+  ): CanonicalEnvelopeInput {
+    const shouldRewrite = mode !== "wall_clock_pacing" || timestampPolicy === "rewrite_to_now";
+    if (!shouldRewrite) {
+      return envelope;
+    }
+
+    const rewrittenIso = new Date(effectiveTimestamp.getTime() + envelopeIndex).toISOString();
+    const payloadRecord =
+      typeof envelope.payload === "object" && envelope.payload ? { ...(envelope.payload as Record<string, unknown>) } : null;
+
+    if (envelope.message_type === "robot_event" && payloadRecord) {
+      payloadRecord.occurred_at = rewrittenIso;
+    }
+    if (envelope.message_type === "task_status" && payloadRecord) {
+      payloadRecord.updated_at = rewrittenIso;
+    }
+
+    return {
+      ...envelope,
+      timestamp: rewrittenIso,
+      payload: (payloadRecord ?? envelope.payload) as CanonicalEnvelopeInput["payload"]
+    };
+  }
+
+  private getCaptureDir(captureId: string) {
+    return path.join(this.adapterCaptureRoot, captureId);
+  }
+
+  private getCaptureManifestPath(captureId: string) {
+    return path.join(this.getCaptureDir(captureId), "manifest.json");
+  }
+
+  private getCaptureEntriesPath(captureId: string) {
+    return path.join(this.getCaptureDir(captureId), "entries.jsonl");
+  }
+
+  private async ensureSiteBelongsToTenant(tenantId: string, siteId: string) {
+    const site = await this.prisma.site.findFirst({
+      where: {
+        id: siteId,
+        tenantId
+      },
+      select: { id: true }
+    });
+    if (!site) {
+      throw new NotFoundException("site_id not found for tenant");
+    }
+  }
+
+  private async loadCaptureManifests(tenantId: string): Promise<RawCaptureManifest[]> {
+    let directories: string[] = [];
+    try {
+      const dirents = await readdir(this.adapterCaptureRoot, { withFileTypes: true });
+      directories = dirents.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    } catch (error) {
+      return [];
+    }
+
+    const manifests: RawCaptureManifest[] = [];
+    for (const captureId of directories) {
+      try {
+        const manifest = await this.readCaptureManifestForTenant(captureId, tenantId);
+        manifests.push(manifest);
+      } catch (error) {
+        continue;
+      }
+    }
+
+    return manifests;
+  }
+
+  private async readCaptureManifestForTenant(captureId: string, tenantId: string): Promise<RawCaptureManifest> {
+    const manifestPath = this.getCaptureManifestPath(captureId);
+    const contents = await readFile(manifestPath, "utf8");
+    let manifestJson: unknown;
+    try {
+      manifestJson = JSON.parse(contents);
+    } catch (error) {
+      throw new BadRequestException(`Invalid capture manifest JSON: ${captureId}`);
+    }
+    const parsed = rawCaptureManifestSchema.safeParse(manifestJson);
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid capture manifest: ${captureId}`);
+    }
+    if (parsed.data.tenant_id !== tenantId) {
+      throw new NotFoundException("Capture not found");
+    }
+    return parsed.data;
+  }
+
+  private async readCaptureEntries(captureId: string): Promise<RawCaptureEntry[]> {
+    const entriesPath = this.getCaptureEntriesPath(captureId);
+    const contents = await readFile(entriesPath, "utf8");
+    const lines = contents
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const entries: RawCaptureEntry[] = [];
+    for (const [lineIndex, line] of lines.entries()) {
+      let entryJson: unknown;
+      try {
+        entryJson = JSON.parse(line);
+      } catch (error) {
+        throw new BadRequestException(`Invalid capture entry JSON at line ${lineIndex + 1}`);
+      }
+      const parsed = rawCaptureEntrySchema.safeParse(entryJson);
+      if (!parsed.success) {
+        throw new BadRequestException(parsed.error.flatten());
+      }
+      entries.push(parsed.data);
+    }
+    return entries;
+  }
+
+  private async updateAdapterHealthState(
+    tenantId: string,
+    siteId: string,
+    vendor: string,
+    adapterName: string,
+    status: "healthy" | "degraded" | "error" | "unknown",
+    patch: {
+      lastSuccessAt?: Date | null;
+      lastErrorAt?: Date | null;
+      lastError?: string | null;
+      lastRunId?: string | null;
+    }
+  ) {
+    const normalizedVendor = this.normalizeVendorValue(vendor);
+    const normalizedAdapterName = adapterName.trim().toLowerCase();
+
+    const updateData: Prisma.AdapterHealthStateUpdateInput = {
+      status,
+      ...(patch.lastSuccessAt !== undefined ? { lastSuccessAt: patch.lastSuccessAt } : {}),
+      ...(patch.lastErrorAt !== undefined ? { lastErrorAt: patch.lastErrorAt } : {}),
+      ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+      ...(patch.lastRunId !== undefined ? { lastRunId: patch.lastRunId } : {})
+    };
+
+    const createData: Prisma.AdapterHealthStateCreateInput = {
+      id: randomUUID(),
+      status,
+      tenant: { connect: { id: tenantId } },
+      site: { connect: { id: siteId } },
+      vendor: normalizedVendor,
+      adapterName: normalizedAdapterName,
+      lastSuccessAt: patch.lastSuccessAt ?? null,
+      lastErrorAt: patch.lastErrorAt ?? null,
+      lastError: patch.lastError ?? null,
+      lastRunId: patch.lastRunId ?? null
+    };
+
+    await this.prisma.adapterHealthState.upsert({
+      where: {
+        tenantId_siteId_vendor_adapterName: {
+          tenantId,
+          siteId,
+          vendor: normalizedVendor,
+          adapterName: normalizedAdapterName
+        }
+      },
+      update: updateData,
+      create: createData
+    });
+  }
+
+  private deterministicMessageId(seed: string) {
+    const hash = createHash("sha256").update(seed).digest("hex");
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+  }
+
+  private buildCanonicalEnvelopeFromRaw(rawPayload: Record<string, unknown>, context: AdapterToCanonicalContext): CanonicalEnvelopeInput[] {
+    const messageTypeRaw = typeof rawPayload.message_type === "string" ? rawPayload.message_type : "robot_state";
+    const messageType =
+      messageTypeRaw === "robot_event" || messageTypeRaw === "task_status" || messageTypeRaw === "robot_state"
+        ? messageTypeRaw
+        : "robot_state";
+    const robotId =
+      typeof rawPayload.robot_id === "string" && rawPayload.robot_id.trim().length > 0 ? rawPayload.robot_id.trim() : "r1";
+    const timestamp =
+      typeof rawPayload.timestamp === "string" && rawPayload.timestamp.length > 0 ? rawPayload.timestamp : context.fallbackTimestamp;
+    const messageId =
+      typeof rawPayload.message_id === "string" && rawPayload.message_id.length > 0
+        ? rawPayload.message_id
+        : this.deterministicMessageId(`${context.manifest.capture_id}:${context.captureIndex}:${messageType}`);
+    const sourceId =
+      typeof rawPayload.source_id === "string" && rawPayload.source_id.length > 0
+        ? rawPayload.source_id
+        : `${context.adapterName}:${context.captureIndex}`;
+
+    if (messageType === "robot_event") {
+      const dedupeKey =
+        typeof rawPayload.dedupe_key === "string" && rawPayload.dedupe_key.length > 0
+          ? rawPayload.dedupe_key
+          : `${robotId}:${typeof rawPayload.event_type === "string" ? rawPayload.event_type : "robot_event"}:${timestamp}`;
+      return [
+        {
+          message_id: messageId,
+          schema_version: 1,
+          tenant_id: context.tenantId,
+          site_id: context.siteId,
+          message_type: "robot_event",
+          timestamp,
+          source: {
+            source_type: "adapter",
+            source_id: sourceId,
+            vendor: context.vendor,
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: robotId
+          },
+          payload: {
+            sequence: typeof rawPayload.sequence === "number" ? Math.max(1, Math.round(rawPayload.sequence)) : context.captureIndex + 1,
+            event_type: typeof rawPayload.event_type === "string" ? rawPayload.event_type : "vendor_event",
+            dedupe_key: dedupeKey,
+            severity:
+              rawPayload.severity === "info" || rawPayload.severity === "warning" || rawPayload.severity === "major" || rawPayload.severity === "critical"
+                ? rawPayload.severity
+                : "warning",
+            category:
+              rawPayload.category === "navigation" ||
+              rawPayload.category === "traffic" ||
+              rawPayload.category === "battery" ||
+              rawPayload.category === "connectivity" ||
+              rawPayload.category === "hardware" ||
+              rawPayload.category === "safety" ||
+              rawPayload.category === "integration"
+                ? rawPayload.category
+                : "integration",
+            title: typeof rawPayload.title === "string" ? rawPayload.title : "Adapter replay event",
+            message: typeof rawPayload.message === "string" ? rawPayload.message : undefined,
+            create_incident: typeof rawPayload.create_incident === "boolean" ? rawPayload.create_incident : false,
+            occurred_at: timestamp,
+            meta: {
+              capture_id: context.manifest.capture_id,
+              capture_index: context.captureIndex
+            }
+          }
+        }
+      ];
+    }
+
+    if (messageType === "task_status") {
+      const taskId =
+        typeof rawPayload.task_id === "string" && rawPayload.task_id.trim().length > 0 ? rawPayload.task_id.trim() : "m1";
+      const state =
+        rawPayload.state === "queued" ||
+        rawPayload.state === "running" ||
+        rawPayload.state === "blocked" ||
+        rawPayload.state === "succeeded" ||
+        rawPayload.state === "failed" ||
+        rawPayload.state === "canceled"
+          ? rawPayload.state
+          : "running";
+      return [
+        {
+          message_id: messageId,
+          schema_version: 1,
+          tenant_id: context.tenantId,
+          site_id: context.siteId,
+          message_type: "task_status",
+          timestamp,
+          source: {
+            source_type: "adapter",
+            source_id: sourceId,
+            vendor: context.vendor,
+            protocol: "internal"
+          },
+          entity: {
+            entity_type: "robot",
+            robot_id: robotId
+          },
+          payload: {
+            sequence: typeof rawPayload.sequence === "number" ? Math.max(1, Math.round(rawPayload.sequence)) : context.captureIndex + 1,
+            task_id: taskId,
+            state,
+            percent_complete:
+              typeof rawPayload.percent_complete === "number"
+                ? Math.max(0, Math.min(100, rawPayload.percent_complete))
+                : undefined,
+            updated_at: timestamp,
+            message: typeof rawPayload.message === "string" ? rawPayload.message : undefined,
+            meta: {
+              capture_id: context.manifest.capture_id,
+              capture_index: context.captureIndex
+            }
+          }
+        }
+      ];
+    }
+
+    const floorplanId =
+      typeof rawPayload.floorplan_id === "string" && rawPayload.floorplan_id.length > 0
+        ? rawPayload.floorplan_id
+        : context.siteId === "s2"
+          ? "f2"
+          : "f1";
+
+    return [
+      {
+        message_id: messageId,
+        schema_version: 1,
+        tenant_id: context.tenantId,
+        site_id: context.siteId,
+        message_type: "robot_state",
+        timestamp,
+        source: {
+          source_type: "adapter",
+          source_id: sourceId,
+          vendor: context.vendor,
+          protocol: "internal"
+        },
+        entity: {
+          entity_type: "robot",
+          robot_id: robotId
+        },
+        payload: {
+          sequence: typeof rawPayload.sequence === "number" ? Math.max(1, Math.round(rawPayload.sequence)) : context.captureIndex + 1,
+          status:
+            rawPayload.status === "online" ||
+            rawPayload.status === "offline" ||
+            rawPayload.status === "degraded" ||
+            rawPayload.status === "maintenance" ||
+            rawPayload.status === "emergency_stop"
+              ? rawPayload.status
+              : "online",
+          battery_percent:
+            typeof rawPayload.battery_percent === "number"
+              ? Math.max(0, Math.min(100, rawPayload.battery_percent))
+              : undefined,
+          pose: {
+            floorplan_id: floorplanId,
+            vendor_map_id: typeof rawPayload.vendor_map_id === "string" ? rawPayload.vendor_map_id : undefined,
+            vendor_map_name: typeof rawPayload.vendor_map_name === "string" ? rawPayload.vendor_map_name : undefined,
+            x: typeof rawPayload.x === "number" ? rawPayload.x : 0,
+            y: typeof rawPayload.y === "number" ? rawPayload.y : 0,
+            heading_degrees: typeof rawPayload.heading_degrees === "number" ? rawPayload.heading_degrees : 0,
+            confidence: typeof rawPayload.confidence === "number" ? rawPayload.confidence : 0.95
+          },
+          metrics:
+            typeof rawPayload.metrics === "object" && rawPayload.metrics
+              ? (rawPayload.metrics as Record<string, number>)
+              : undefined,
+          meta: {
+            capture_id: context.manifest.capture_id,
+            capture_index: context.captureIndex
+          }
+        }
+      }
+    ];
+  }
+
+  private createDemoPollingAdapter(vendor: string, adapterName: string): PollingAdapterRuntime {
+    let initialized = false;
+    let lastError: string | null = null;
+    let lastSuccessAt: Date | null = null;
+    let sequence = 0;
+    const normalizedVendor = this.normalizeVendorValue(vendor);
+    const normalizedAdapterName = adapterName.trim().toLowerCase();
+
+    return {
+      kind: "polling",
+      vendor: normalizedVendor,
+      adapterName: normalizedAdapterName,
+      initialize: async () => {
+        initialized = true;
+        sequence = 0;
+        lastError = null;
+      },
+      poll: async (context) => {
+        if (!initialized) {
+          lastError = "Adapter not initialized";
+          throw new Error(lastError);
+        }
+
+        sequence += 1;
+        const timestamp = new Date(Date.now() + context.tick * 1000).toISOString();
+        const robotId = context.siteId === "s2" ? "r9" : "r1";
+        const cycle = sequence % 3;
+        const messageType = cycle === 1 ? "robot_state" : cycle === 2 ? "task_status" : "robot_event";
+
+        const rawPayload: Record<string, unknown> = {
+          message_type: messageType,
+          message_id: this.deterministicMessageId(`${context.captureId}:${sequence}:${messageType}`),
+          timestamp,
+          robot_id: robotId,
+          sequence
+        };
+
+        if (messageType === "robot_state") {
+          rawPayload.status = "online";
+          rawPayload.battery_percent = Math.max(20, 95 - (sequence % 60));
+          rawPayload.floorplan_id = context.siteId === "s2" ? "f2" : "f1";
+          rawPayload.x = 40 + sequence * 1.5;
+          rawPayload.y = 60 + sequence;
+          rawPayload.heading_degrees = (sequence * 15) % 360;
+          rawPayload.confidence = 0.96;
+          if (normalizedVendor === "vendor_acme" && context.siteId === "s1") {
+            rawPayload.vendor_map_id = "acme-s1-main";
+          }
+          rawPayload.metrics = {
+            battery: Math.max(20, 95 - (sequence % 60)),
+            cpu_percent: 18 + (sequence % 20),
+            temp_c: 28 + (sequence % 5),
+            network_rssi: -48 - (sequence % 8),
+            disk_percent: 35 + (sequence % 15)
+          };
+        } else if (messageType === "task_status") {
+          rawPayload.task_id = "m1";
+          rawPayload.state = sequence % 6 === 0 ? "succeeded" : "running";
+          rawPayload.percent_complete = Math.min(100, 10 + (sequence % 9) * 10);
+          rawPayload.message = "Replay task progress";
+        } else {
+          rawPayload.event_type = "adapter_warning";
+          rawPayload.dedupe_key = `${robotId}:adapter_warning:${Math.floor(sequence / 3)}`;
+          rawPayload.severity = "warning";
+          rawPayload.category = "integration";
+          rawPayload.title = "Adapter replay warning";
+          rawPayload.message = "Synthetic adapter replay event";
+          rawPayload.create_incident = false;
+        }
+
+        lastSuccessAt = new Date();
+        return [
+          {
+            timestamp,
+            rawPayload,
+            rawPath: "/vendor/mock",
+            sequenceHint: sequence
+          }
+        ];
+      },
+      toCanonical: async (rawPayload, context) => this.buildCanonicalEnvelopeFromRaw(rawPayload, context),
+      health: async () => ({
+        status: lastError ? "error" : initialized ? "healthy" : "unknown",
+        lastSuccessAt,
+        lastErrorAt: lastError ? new Date() : null,
+        lastError
+      })
+    };
+  }
+
+  private createDemoStreamingAdapter(vendor: string, adapterName: string): StreamingAdapterRuntime {
+    let initialized = false;
+    let connected = false;
+    let sequence = 0;
+    let lastSuccessAt: Date | null = null;
+    let lastError: string | null = null;
+    const normalizedVendor = this.normalizeVendorValue(vendor);
+    const normalizedAdapterName = adapterName.trim().toLowerCase();
+
+    return {
+      kind: "streaming",
+      vendor: normalizedVendor,
+      adapterName: normalizedAdapterName,
+      initialize: async () => {
+        initialized = true;
+        sequence = 0;
+        lastError = null;
+      },
+      connect: async () => {
+        if (!initialized) {
+          lastError = "Adapter not initialized";
+          throw new Error(lastError);
+        }
+        connected = true;
+      },
+      sample: async (context) => {
+        if (!connected) {
+          lastError = "Adapter stream is not connected";
+          throw new Error(lastError);
+        }
+        sequence += 1;
+        const timestamp = new Date(Date.now() + context.tick * 1000).toISOString();
+        const robotId = context.siteId === "s2" ? "r9" : "r1";
+        lastSuccessAt = new Date();
+        return [
+          {
+            timestamp,
+            rawPayload: {
+              message_type: "robot_state",
+              message_id: this.deterministicMessageId(`${context.captureId}:stream:${sequence}`),
+              timestamp,
+              robot_id: robotId,
+              sequence,
+              status: "online",
+              floorplan_id: context.siteId === "s2" ? "f2" : "f1",
+              x: 10 + sequence,
+              y: 25 + sequence * 1.5,
+              heading_degrees: (sequence * 12) % 360,
+              confidence: 0.95,
+              battery_percent: Math.max(15, 92 - (sequence % 50)),
+              metrics: {
+                battery: Math.max(15, 92 - (sequence % 50)),
+                cpu_percent: 15 + (sequence % 10),
+                temp_c: 27 + (sequence % 4),
+                network_rssi: -45 - (sequence % 6),
+                disk_percent: 30 + (sequence % 10)
+              }
+            },
+            rawPath: "/vendor/stream/mock",
+            sequenceHint: sequence
+          }
+        ];
+      },
+      onMessage: async (rawPayload, context) =>
+        this.buildCanonicalEnvelopeFromRaw(rawPayload, {
+          tenantId: typeof context?.tenant_id === "string" ? context.tenant_id : "t1",
+          siteId: typeof context?.site_id === "string" ? context.site_id : "s1",
+          vendor: typeof context?.vendor === "string" ? context.vendor : normalizedVendor,
+          adapterName: typeof context?.adapter_name === "string" ? context.adapter_name : normalizedAdapterName,
+          manifest: {
+            capture_id: typeof context?.capture_id === "string" ? context.capture_id : "stream-live",
+            tenant_id: typeof context?.tenant_id === "string" ? context.tenant_id : "t1",
+            vendor: typeof context?.vendor === "string" ? context.vendor : normalizedVendor,
+            site_id: typeof context?.site_id === "string" ? context.site_id : "s1",
+            adapter_name: typeof context?.adapter_name === "string" ? context.adapter_name : normalizedAdapterName,
+            source_endpoint: "/vendor/stream/mock",
+            start_time: typeof context?.timestamp === "string" ? context.timestamp : new Date().toISOString(),
+            end_time: typeof context?.timestamp === "string" ? context.timestamp : new Date().toISOString(),
+            capture_version: CAPTURE_FORMAT_VERSION,
+            entry_count: 1
+          },
+          captureIndex: typeof context?.capture_index === "number" ? context.capture_index : 0,
+          fallbackTimestamp: typeof context?.timestamp === "string" ? context.timestamp : new Date().toISOString()
+        }),
+      toCanonical: async (rawPayload, context) => this.buildCanonicalEnvelopeFromRaw(rawPayload, context),
+      disconnect: async () => {
+        connected = false;
+      },
+      health: async () => ({
+        status: lastError ? "error" : connected ? "healthy" : initialized ? "degraded" : "unknown",
+        lastSuccessAt,
+        lastErrorAt: lastError ? new Date() : null,
+        lastError
+      })
+    };
+  }
+
+  private getAdapterRuntime(vendor: string, adapterName: string): AdapterRuntime {
+    const normalizedVendor = this.normalizeVendorValue(vendor);
+    const normalizedAdapterName = adapterName.trim().toLowerCase();
+
+    if (normalizedAdapterName === "demo_polling") {
+      return this.createDemoPollingAdapter(normalizedVendor, normalizedAdapterName);
+    }
+    if (normalizedAdapterName === "demo_streaming") {
+      return this.createDemoStreamingAdapter(normalizedVendor, normalizedAdapterName);
+    }
+
+    throw new BadRequestException(`Unsupported adapter registration: ${normalizedVendor}/${normalizedAdapterName}`);
   }
 
   private async listEffectiveRobotStates(tenantId: string, siteIds: string[]) {

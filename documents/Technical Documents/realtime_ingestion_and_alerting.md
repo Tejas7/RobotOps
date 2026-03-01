@@ -58,6 +58,34 @@ Phase 4 semantic dedupe windows:
 - `task_status`: `(tenantId,siteId,taskId,state,updated_at)` encoded as dedupe key, window `86400s`
 - Semantic duplicates are processed-as-dropped (audited) and do not create dead letters.
 
+## Adapter Recording and Replay Harness (V1 Phase 5)
+Adapter APIs:
+- `GET /api/adapters/health`
+- `GET /api/adapters/captures`
+- `POST /api/adapters/captures/record`
+- `POST /api/adapters/replays`
+- `GET /api/adapters/replays/:id`
+
+Phase 5 adapter runtime model:
+- static adapter registry (explicit local registration)
+- polling + streaming runtime contracts
+- local filesystem capture repository (`.data/adapter-captures`)
+- deterministic replay execution persisted in DB (`AdapterReplayRun`, `AdapterReplayRunEvent`)
+
+Replay execution rule:
+- replay transforms raw capture entries to canonical envelopes and calls the same `ingestTelemetry` service method used by `POST /ingest/telemetry`.
+- no direct writes to canonical/domain tables are performed by replay bypass paths.
+
+Recording rule:
+- recorder writes JSONL entries incrementally (stream-like append)
+- manifest is written after collection is complete
+- adapter health state is updated on success/failure (`AdapterHealthState`)
+
+Replay deterministic ordering:
+- entries sorted by `(timestamp asc, capture_index asc)` when `deterministic_ordering=true`
+- optional time-window filtering (`from,to`) is applied before ordering
+- per-message replay outcomes persisted as `accepted|duplicate|failed`
+
 ## Queue Abstraction and Consumer Tick
 Service: `apps/api/src/services/nats-jetstream.service.ts`
 

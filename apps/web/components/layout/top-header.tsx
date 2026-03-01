@@ -16,8 +16,8 @@ export function TopHeader() {
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const urlSiteId = searchParams.get("site_id");
-    const urlTimeRange = searchParams.get("time_range");
+    const urlSiteId = searchParams?.get("site_id");
+    const urlTimeRange = searchParams?.get("time_range");
 
     if (urlSiteId && urlSiteId !== siteId) {
       setSiteId(urlSiteId);

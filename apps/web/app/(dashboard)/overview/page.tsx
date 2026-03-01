@@ -6,7 +6,7 @@ import { BookmarkPlus, ShieldCheck } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
 import { useLiveSocket } from "@/hooks/use-live-socket";
@@ -83,8 +83,8 @@ export default function OverviewPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const effectiveSiteId = searchParams.get("site_id") ?? siteId;
-  const effectiveTimeRange = searchParams.get("time_range") ?? timeRange;
+  const effectiveSiteId = searchParams?.get("site_id") ?? siteId;
+  const effectiveTimeRange = searchParams?.get("time_range") ?? timeRange;
   const { socket } = useLiveSocket();
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [defaultApplied, setDefaultApplied] = useState(false);
@@ -106,10 +106,10 @@ export default function OverviewPage() {
   const incidents = liveIncidents ?? incidentsQuery.data ?? [];
 
   function syncFiltersToUrl(nextSiteId: string, nextTimeRange: string) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.set("site_id", nextSiteId);
     params.set("time_range", nextTimeRange);
-    router.replace(`${pathname}?${params.toString()}` as Route, { scroll: false });
+    router.replace(`${pathname ?? "/overview"}?${params.toString()}` as Route, { scroll: false });
   }
 
   async function applySavedView(viewId: string) {
@@ -160,8 +160,8 @@ export default function OverviewPage() {
   }
 
   useEffect(() => {
-    const urlSiteId = searchParams.get("site_id");
-    const urlTimeRange = searchParams.get("time_range");
+    const urlSiteId = searchParams?.get("site_id");
+    const urlTimeRange = searchParams?.get("time_range");
 
     if (urlSiteId && urlSiteId !== siteId) {
       setSiteId(urlSiteId);
@@ -176,7 +176,7 @@ export default function OverviewPage() {
       return;
     }
 
-    if (searchParams.get("site_id") || searchParams.get("time_range")) {
+    if (searchParams?.get("site_id") || searchParams?.get("time_range")) {
       setDefaultApplied(true);
       return;
     }
@@ -377,24 +377,21 @@ export default function OverviewPage() {
           <CardMeta>Status counts by robot state</CardMeta>
           <div className="mt-4 h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={healthDistribution} dataKey="value" nameKey="name" outerRadius={95} label>
-                  {healthDistribution.map((entry) => (
-                    <Cell
-                      key={entry.name}
-                      fill={{
-                        online: "#22c55e",
-                        degraded: "#f59e0b",
-                        offline: "#94a3b8",
-                        maintenance: "#0ea5e9",
-                        emergency_stop: "#ef4444"
-                      }[entry.name] ?? "#94a3b8"}
-                    />
-                  ))}
-                </Pie>
+              <BarChart data={healthDistribution}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#d6dbe7" />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} />
                 <Tooltip />
-              </PieChart>
+                <Bar dataKey="value" fill="#2563eb" radius={[8, 8, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
+            <ul className="sr-only">
+              {healthDistribution.map((entry) => (
+                <li key={`health-summary-${entry.name}`}>
+                  {entry.name}: {entry.value}
+                </li>
+              ))}
+            </ul>
           </div>
         </Card>
 

@@ -68,8 +68,8 @@ export default function AnalyticsPage() {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
 
-  const effectiveSiteId = searchParams.get("site_id") ?? siteId;
-  const effectiveTimeRange = searchParams.get("time_range") ?? timeRange;
+  const effectiveSiteId = searchParams?.get("site_id") ?? siteId;
+  const effectiveTimeRange = searchParams?.get("time_range") ?? timeRange;
   const isAllSites = effectiveSiteId === "all";
 
   const dashboardQuery = useAuthedQuery<AnalyticsResponse>(

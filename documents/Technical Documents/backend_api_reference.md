@@ -66,6 +66,15 @@ Base URL: `http://localhost:4000/api`
 | DELETE | `/vendor-site-maps/:id` | `config.write` | Delete binding by id. |
 | POST | `/vendor-site-maps/preview` | `config.write` | Transform preview utility for one or more sample points. |
 
+## Adapter Harness (V1 Phase 5)
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/adapters/health` | `integrations.read` or `config.read` | Adapter runtime health per tenant/site/vendor/adapter (`status,last_success_at,last_error_at,last_error,last_run_id`). |
+| GET | `/adapters/captures` | `integrations.read` | Lists capture manifests from `.data/adapter-captures`. Filters: `site_id,vendor`. |
+| POST | `/adapters/captures/record` | `integrations.manage` | Records raw payload capture via registered adapter (`vendor,site_id,adapter_name,duration_seconds,source_endpoint,capture_id?`). |
+| POST | `/adapters/replays` | `integrations.manage` or `telemetry.ingest` | Deterministic replay run from capture id through canonical ingest path. Supports `replay_speed_multiplier,time_window_filter,deterministic_ordering,validation_only,return_envelopes`. |
+| GET | `/adapters/replays/:id` | `integrations.read` | Replay run detail with per-message outcomes (`accepted,duplicate,failed`). |
+
 ## Analytics
 | Method | Path | Permission | Notes |
 |---|---|---|---|
@@ -73,10 +82,10 @@ Base URL: `http://localhost:4000/api`
 | GET | `/analytics/cross-site` | `analytics.read.cross_site` or `analytics.read` | Cross-site rollup response by site/trend. |
 | GET | `/analytics/export` | `analytics.export` | Query: `format=csv|pdf`, `dataset=dashboard|cross_site`, + window/site params. |
 
-## Canonical Ingestion (V1 Phase 1 + 3 + 4)
+## Canonical Ingestion (V1 Phase 1 + 3 + 4 + 5 replay path)
 | Method | Path | Permission | Notes |
 |---|---|---|---|
-| POST | `/ingest/telemetry` | `telemetry.ingest` | Accepts strict canonical envelope only. `schema_version=1` accepted. Persists `CanonicalMessage` + `IngestionEvent`, publishes to NATS stub. Phase 4 adds strict dedupe/order handling by message type. |
+| POST | `/ingest/telemetry` | `telemetry.ingest` | Accepts strict canonical envelope only. `schema_version=1` accepted. Persists `CanonicalMessage` + `IngestionEvent`, publishes to NATS stub. Phase 4 adds strict dedupe/order handling by message type. Phase 5 replay uses this exact ingest method (no direct DB bypass). |
 
 Canonical envelope required fields:
 - `message_id` (UUID)

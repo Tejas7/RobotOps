@@ -17,6 +17,7 @@ Robotics operations and orchestration dashboard for heterogeneous fleets.
 - V1 Phase 2: `RobotLastState` read model introduced as canonical robot live-state source (`/robots/last_state`) with compatibility overlays on `/robots` and `/robots/:id`.
 - V1 Phase 3: `VendorSiteMap` mapping + ingest transform path to keep vendor pose in RobotOps floorplan coordinates, with Settings visual transform editor and preview API.
 - V1 Phase 4: dedupe windows + deterministic ordering hardened (`robot_event` `dedupe_key` required, sequence-aware processing, robot/task cursors, and no-duplicate/no-jitter ingest side effects).
+- V1 Phase 5: adapter capture/replay harness with deterministic replay through canonical ingest, adapter health APIs, replay diagnostics persistence, and adapter CLI workflows.
 
 ## Technical documentation
 - Technical source of truth: `documents/Technical Documents/`
@@ -102,10 +103,39 @@ npm run qa:v1:phase1
 npm run qa:v1:phase2
 npm run qa:v1:phase3
 npm run qa:v1:phase4
+npm run qa:v1:phase5
 npm run qa:phase1
 npm run qa:phase2
 npm run qa:phase3
 ```
+
+## Adapter harness CLI (V1 Phase 5)
+Set:
+
+```bash
+export ROBOTOPS_API_URL=http://localhost:4000/api
+export ROBOTOPS_TOKEN=<jwt-token>
+```
+
+Record:
+
+```bash
+npm run adapter:record -- --vendor vendor_acme --site s1 --adapter demo_polling --duration 10 --out capture-demo-001
+```
+
+Replay:
+
+```bash
+npm run adapter:replay -- --capture capture-demo-001 --speed 1 --deterministic true
+```
+
+Validate against golden envelopes:
+
+```bash
+npm run adapter:validate -- --capture capture-demo-001 --expected ./path/to/golden-envelopes.json
+```
+
+Local capture files are written to `.data/adapter-captures/` (manifest + JSONL entries).
 
 ## Notes
 - JWT tenant + role + permissions are issued by NextAuth credentials login.

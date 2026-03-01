@@ -70,6 +70,9 @@ model Tenant {
   vendorSiteMaps VendorSiteMap[]
   taskLastStatuses TaskLastStatus[]
   messageDedupeWindows MessageDedupeWindow[]
+  adapterHealthStates AdapterHealthState[]
+  adapterReplayRuns AdapterReplayRun[]
+  adapterReplayRunEvents AdapterReplayRunEvent[]
 }
 
 model User {
@@ -104,6 +107,7 @@ model Site {
   vendorSiteMaps VendorSiteMap[]
   taskLastStatuses TaskLastStatus[]
   messageDedupeWindows MessageDedupeWindow[]
+  adapterHealthStates AdapterHealthState[]
 }
 
 model Floorplan {
@@ -451,6 +455,62 @@ model IntegrationTestRun {
   createdAt     DateTime
   integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model AdapterHealthState {
+  id            String   @id
+  tenantId      String
+  siteId        String
+  vendor        String
+  adapterName   String
+  status        String
+  lastSuccessAt DateTime?
+  lastErrorAt   DateTime?
+  lastError     String?
+  lastRunId     String?
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  site          Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, siteId, vendor, adapterName])
+  @@index([tenantId, updatedAt])
+}
+
+model AdapterReplayRun {
+  id             String   @id
+  tenantId       String
+  captureId      String
+  status         String
+  startedAt      DateTime
+  endedAt        DateTime?
+  acceptedCount  Int      @default(0)
+  duplicateCount Int      @default(0)
+  failedCount    Int      @default(0)
+  options        Json
+  errorSummary   String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  events         AdapterReplayRunEvent[]
+
+  @@index([tenantId, startedAt])
+}
+
+model AdapterReplayRunEvent {
+  id          String          @id
+  tenantId    String
+  runId       String
+  messageId   String?
+  messageType MessageType?
+  result      String
+  error       String?
+  createdAt   DateTime        @default(now())
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  run         AdapterReplayRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, messageId])
+  @@index([tenantId, createdAt])
 }
 
 model CanonicalMessage {

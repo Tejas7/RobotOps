@@ -143,6 +143,8 @@ async function run() {
   const token = ownerToken();
   const report = { timestamp: new Date().toISOString(), checks: [] };
   const record = (id, ok, details) => report.checks.push({ id, ok, details });
+  const sequenceBase = Math.floor(Date.now() / 1000);
+  const seq = (offset) => sequenceBase + offset;
 
   try {
     const pipelineBefore = await fetchPipelineStatus(token);
@@ -179,7 +181,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         message_type: "robot_event",
         payload: {
-          sequence: 1,
+          sequence: seq(1),
           event_type: "connectivity_drop",
           severity: "warning",
           category: "connectivity",
@@ -202,7 +204,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
         payload: {
-          sequence: 400,
+          sequence: seq(400),
           status: "online",
           battery_percent: 59,
           pose: {
@@ -229,7 +231,10 @@ async function run() {
       record("V1P4-QA-003", true, "message_id idempotency remains enforced.");
     }
 
-    const orderingTimestamp = new Date(Date.now() + 1500).toISOString();
+    const currentRobotState = await fetchLastStateByRobot(token);
+    const minOrderingMs = Date.now() + 1500;
+    const currentLastSeenMs = currentRobotState?.lastSeenAt ? new Date(String(currentRobotState.lastSeenAt)).getTime() + 15000 : minOrderingMs;
+    const orderingTimestamp = new Date(Math.max(minOrderingMs, currentLastSeenMs)).toISOString();
 
     // Baseline accepted robot_state used for ordering checks.
     {
@@ -237,7 +242,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         timestamp: orderingTimestamp,
         payload: {
-          sequence: 500,
+          sequence: seq(500),
           status: "online",
           battery_percent: 60,
           pose: {
@@ -268,7 +273,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         timestamp: isoOffset(orderingTimestamp, -10000),
         payload: {
-          sequence: 900,
+          sequence: seq(900),
           status: "online",
           battery_percent: 33,
           pose: {
@@ -300,7 +305,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         timestamp: orderingTimestamp,
         payload: {
-          sequence: 499,
+          sequence: seq(499),
           status: "online",
           battery_percent: 61,
           pose: {
@@ -328,7 +333,7 @@ async function run() {
         message_id: crypto.randomUUID(),
         timestamp: orderingTimestamp,
         payload: {
-          sequence: 501,
+          sequence: seq(501),
           status: "online",
           battery_percent: 62,
           pose: {
@@ -366,7 +371,7 @@ async function run() {
         message_type: "robot_event",
         timestamp: occurredAt,
         payload: {
-          sequence: 10,
+          sequence: seq(10),
           dedupe_key: dedupeKey,
           event_type: "connectivity_drop",
           severity: "warning",
@@ -390,7 +395,7 @@ async function run() {
         message_type: "robot_event",
         timestamp: isoOffset(occurredAt, 60000),
         payload: {
-          sequence: 11,
+          sequence: seq(11),
           dedupe_key: dedupeKey,
           event_type: "connectivity_drop",
           severity: "warning",
@@ -415,7 +420,7 @@ async function run() {
         message_type: "robot_event",
         timestamp: isoOffset(occurredAt, 31 * 60 * 1000),
         payload: {
-          sequence: 12,
+          sequence: seq(12),
           dedupe_key: dedupeKey,
           event_type: "connectivity_drop",
           severity: "warning",
@@ -447,7 +452,7 @@ async function run() {
         message_type: "task_status",
         timestamp: taskTimestamp,
         payload: {
-          sequence: 700,
+          sequence: seq(700),
           task_id: MISSION_ID,
           state: "blocked",
           percent_complete: 66,
@@ -471,7 +476,7 @@ async function run() {
         message_type: "task_status",
         timestamp: taskTimestamp,
         payload: {
-          sequence: 701,
+          sequence: seq(701),
           task_id: MISSION_ID,
           state: "blocked",
           percent_complete: 67,
@@ -496,7 +501,7 @@ async function run() {
         message_type: "task_status",
         timestamp: isoOffset(taskTimestamp, -30000),
         payload: {
-          sequence: 702,
+          sequence: seq(702),
           task_id: MISSION_ID,
           state: "running",
           percent_complete: 68,
@@ -521,7 +526,7 @@ async function run() {
         message_type: "task_status",
         timestamp: isoOffset(taskTimestamp, 30000),
         payload: {
-          sequence: 703,
+          sequence: seq(703),
           task_id: MISSION_ID,
           state: "running",
           percent_complete: 70,

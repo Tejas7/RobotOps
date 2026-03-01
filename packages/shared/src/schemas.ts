@@ -376,6 +376,77 @@ export const crossSiteAnalyticsQuerySchema = z.object({
   use_rollups: z.coerce.boolean().optional().default(true)
 });
 
+export const adapterCaptureRecordRequestSchema = z.object({
+  vendor: z.string().trim().min(1),
+  site_id: z.string().min(1),
+  adapter_name: z.string().trim().min(1),
+  duration_seconds: z.coerce.number().int().min(1).max(3600).optional().default(10),
+  source_endpoint: z.string().trim().min(1).optional().default("/vendor/mock"),
+  capture_id: z.string().trim().min(1).optional()
+});
+
+export const adapterCaptureQuerySchema = z.object({
+  vendor: z.string().trim().min(1).optional(),
+  site_id: z.string().min(1).optional()
+});
+
+export const rawCaptureManifestSchema = z
+  .object({
+    capture_id: z.string().trim().min(1),
+    tenant_id: z.string().min(1),
+    vendor: z.string().trim().min(1),
+    site_id: z.string().min(1),
+    adapter_name: z.string().trim().min(1),
+    source_endpoint: z.string().trim().min(1),
+    start_time: z.string().datetime(),
+    end_time: z.string().datetime(),
+    capture_version: z.coerce.number().int().positive().optional().default(1),
+    entry_count: z.coerce.number().int().nonnegative()
+  })
+  .superRefine((input, ctx) => {
+    if (new Date(input.start_time).getTime() > new Date(input.end_time).getTime()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["end_time"],
+        message: "end_time must be greater than or equal to start_time"
+      });
+    }
+  });
+
+export const rawCaptureEntrySchema = z.object({
+  timestamp: z.string().datetime(),
+  raw_payload: z.record(z.string(), z.unknown()),
+  raw_headers: z.record(z.string(), z.string()).optional(),
+  raw_path: z.string().optional(),
+  sequence_hint: z.coerce.number().int().optional(),
+  capture_index: z.coerce.number().int().nonnegative()
+});
+
+export const replayOptionsSchema = z.object({
+  replay_speed_multiplier: z.coerce.number().min(0).max(1000).optional().default(1),
+  deterministic_ordering: z.coerce.boolean().optional().default(true),
+  time_window_filter: z
+    .object({
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional()
+    })
+    .optional(),
+  validation_only: z.coerce.boolean().optional().default(false),
+  return_envelopes: z.coerce.boolean().optional().default(false)
+});
+
+export const adapterReplayRequestSchema = replayOptionsSchema.extend({
+  capture_id: z.string().trim().min(1),
+  replay_mode: z
+    .enum(["logical_timestamp_scaling", "wall_clock_pacing", "hybrid"])
+    .optional()
+    .default("logical_timestamp_scaling"),
+  start_at: z.string().datetime().optional(),
+  sleep: z.boolean().optional(),
+  timestamp_policy: z.enum(["preserve", "rewrite_to_now"]).optional(),
+  run_id: z.string().uuid().optional()
+});
+
 const alertSeveritySchema = z.enum(["info", "warning", "major", "critical"]);
 const alertChannelSchema = z.enum(["slack", "teams", "email", "webhook", "pager"]);
 const roleSchema = z.enum(["Owner", "OpsManager", "Engineer", "Operator", "Viewer"]);
@@ -469,6 +540,12 @@ export type TaskStatusPayloadInput = z.infer<typeof taskStatusPayloadSchema>;
 export type CanonicalMessageTypeInput = z.infer<typeof canonicalMessageTypeSchema>;
 export type CanonicalEnvelopeInput = z.infer<typeof canonicalEnvelopeSchema>;
 export type CrossSiteAnalyticsQueryInput = z.infer<typeof crossSiteAnalyticsQuerySchema>;
+export type AdapterCaptureRecordRequestInput = z.infer<typeof adapterCaptureRecordRequestSchema>;
+export type AdapterCaptureQueryInput = z.infer<typeof adapterCaptureQuerySchema>;
+export type RawCaptureManifestInput = z.infer<typeof rawCaptureManifestSchema>;
+export type RawCaptureEntryInput = z.infer<typeof rawCaptureEntrySchema>;
+export type ReplayOptionsInput = z.infer<typeof replayOptionsSchema>;
+export type AdapterReplayRequestInput = z.infer<typeof adapterReplayRequestSchema>;
 export type AlertPolicyInput = z.infer<typeof alertPolicySchema>;
 export type AlertPolicyPatchInput = z.infer<typeof alertPolicyPatchSchema>;
 export type AlertRuleCreateInput = z.infer<typeof alertRuleCreateSchema>;

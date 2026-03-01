@@ -29,6 +29,8 @@
   - Vendor map CRUD + preview checks, ingest transform resolution/fallback/dead-letter behavior, and transform-miss audit checks.
 - `npm run qa:v1:phase4`
   - Dedupe window and ordering checks (`robot_event`/`task_status` duplicate suppression, `robot_state` monotonic ordering, sequence validation, and dropped-event audit/dead-letter behavior).
+- `npm run qa:v1:phase5`
+  - Adapter capture/manifest listing, deterministic replay stability, replay-run diagnostics persistence, and adapter health endpoint verification.
 - `npm run qa:phase1`
   - Core dashboard smoke (overview/fleet/facility + a11y smoke subset).
 - `npm run qa:phase2`
@@ -41,19 +43,28 @@
 - `scripts/v1-phase2-qa.mjs`
 - `scripts/v1-phase3-qa.mjs`
 - `scripts/v1-phase4-qa.mjs`
+- `scripts/v1-phase5-qa.mjs`
 - `scripts/phase1-qa.mjs`
 - `scripts/phase2-qa.mjs`
 - `scripts/phase3-qa.mjs`
+
+## Adapter Harness CLI
+- `npm run adapter:record -- --vendor <vendor> --site <site_id> --adapter <name> --duration <seconds> --out <capture_id>`
+- `npm run adapter:replay -- --capture <capture_id> --speed <multiplier> --from <iso?> --to <iso?> --deterministic true`
+- `npm run adapter:validate -- --capture <capture_id> --expected <golden-json-path>`
 
 ## Deterministic Test Behavior Notes
 - Integration tests are deterministic stubs (no outbound network calls).
 - Alert delivery is deterministic stubbed scheduler behavior.
 - NATS service currently uses in-memory publish/pull queue abstraction plus connectivity probing.
+- Adapter replay deterministic mode sorts capture streams by timestamp + capture_index.
 
 ## Operational Endpoints for Health/Debug
 - Health: `GET /api/health`
 - Pipeline status: `GET /api/system/pipeline-status`
 - Audit explorer data: `GET /api/audit`
+- Adapter health: `GET /api/adapters/health`
+- Replay diagnostics: `GET /api/adapters/replays/:id`
 - Live channel connectivity: Socket.IO on API host
 
 ## Troubleshooting

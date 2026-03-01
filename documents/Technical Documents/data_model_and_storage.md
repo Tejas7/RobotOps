@@ -26,6 +26,10 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - Adds `TaskLastStatus` read-model cursor table.
   - Adds `MessageDedupeWindow` semantic dedupe-window table for `robot_event`/`task_status`.
   - Includes backfill SQL for `RobotLastState.lastStateTimestamp` and `TaskLastStatus` from latest mission state-change events.
+- `20260228193000_v1_phase5_adapter_harness`
+  - Adds `AdapterHealthState` for durable adapter runtime health snapshots.
+  - Adds `AdapterReplayRun` and `AdapterReplayRunEvent` for replay run persistence and diagnostics.
+  - Adds required tenant/time and run/message indexes for replay diagnostics queries.
 
 ## Core Domain Models
 - Tenant context: `Tenant`, `User`, `Site`, `Floorplan`, `Zone`.
@@ -116,6 +120,25 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - Stores semantic dedupe TTL materialization:
     - `windowSeconds`, `firstSeenAt`, `expiresAt`, `lastMessageId`
 
+## V1 Phase 5 Adapter Harness Models
+- `AdapterHealthState`
+  - Unique key `(tenantId, siteId, vendor, adapterName)`
+  - Fields:
+    - `status` (`healthy|degraded|error|unknown`)
+    - `lastSuccessAt`, `lastErrorAt`, `lastError`, `lastRunId`
+    - `updatedAt`
+- `AdapterReplayRun`
+  - Replay execution summary:
+    - `captureId`, `status`, `startedAt`, `endedAt`
+    - `acceptedCount`, `duplicateCount`, `failedCount`
+    - `options` (JSON replay options), `errorSummary`
+    - `createdBy`
+- `AdapterReplayRunEvent`
+  - Replay message-level outcome diagnostics:
+    - `runId`, `messageId`, `messageType`
+    - `result` (`accepted|duplicate|failed`)
+    - `error`, `createdAt`
+
 ## Key Indexes (Operational)
 - Telemetry query/read-path:
   - `TelemetryPoint(tenantId, robotId, metric, timestamp)`
@@ -139,6 +162,25 @@ Primary schema file: `apps/api/prisma/schema.prisma`
   - `VendorSiteMap(tenantId, siteId, vendor, vendorMapName)`
   - Partial unique index on `(tenantId, siteId, vendor, vendorMapId)` where `vendorMapId IS NOT NULL`
   - Partial unique index on `(tenantId, siteId, vendor, vendorMapName)` where `vendorMapName IS NOT NULL`
+- Phase 5 adapter harness indexes:
+  - `AdapterHealthState(tenantId, updatedAt)`
+  - `AdapterReplayRun(tenantId, startedAt)`
+  - `AdapterReplayRunEvent(runId, messageId)`
+  - `AdapterReplayRunEvent(tenantId, createdAt)`
+
+## Filesystem Capture Storage (V1 Phase 5)
+- Capture root: `.data/adapter-captures/`
+- Per-capture files:
+  - `.data/adapter-captures/<capture_id>/manifest.json`
+  - `.data/adapter-captures/<capture_id>/entries.jsonl`
+- Manifest fields:
+  - `capture_id`, `tenant_id`, `vendor`, `site_id`, `adapter_name`
+  - `source_endpoint`, `start_time`, `end_time`
+  - `capture_version`, `entry_count`
+- Entry fields:
+  - `timestamp`, `raw_payload`
+  - optional `raw_headers`, `raw_path`, `sequence_hint`
+  - `capture_index`
 
 ## Rollup Tables
 - `SiteAnalyticsRollupHourly`
@@ -189,3 +231,7 @@ Seed script (`apps/api/prisma/seed.ts`) is idempotent and includes:
   - canonical `robot_event` fixture includes required `dedupe_key`
   - seeded `TaskLastStatus` baseline rows from mission state timeline
   - seeded `MessageDedupeWindow` samples for robot-event and task-status windows
+- V1 Phase 5 fixtures:
+  - seeded `AdapterHealthState` rows for healthy/error adapter examples
+  - seeded `AdapterReplayRun` summaries (completed/failed)
+  - seeded `AdapterReplayRunEvent` diagnostics (`accepted`,`duplicate`,`failed`)

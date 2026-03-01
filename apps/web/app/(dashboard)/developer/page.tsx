@@ -6,6 +6,7 @@ import { Card, CardMeta, CardTitle } from "@/components/ui/card";
 import { JsonDiff } from "@/components/ui/json-diff";
 import { PageTitle } from "@/components/pages/page-title";
 import { DataTable, Table, THead, Th, Tr, Td } from "@/components/ui/table";
+import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
 import { useLiveSocket } from "@/hooks/use-live-socket";
 import { useSession } from "next-auth/react";
@@ -42,6 +43,66 @@ interface PipelineStatus {
   timescale: { extensionAvailable: boolean; hypertableReady: boolean; continuousAggregates: string[] };
 }
 
+interface AdapterHealthItem {
+  id: string;
+  site_id: string;
+  vendor: string;
+  adapter_name: string;
+  status: "healthy" | "degraded" | "error" | "unknown";
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  last_run_id: string | null;
+  updated_at: string;
+}
+
+interface AdapterCaptureItem {
+  capture_id: string;
+  tenant_id: string;
+  vendor: string;
+  site_id: string;
+  adapter_name: string;
+  source_endpoint: string;
+  start_time: string;
+  end_time: string;
+  capture_version: number;
+  entry_count: number;
+}
+
+interface AdapterReplayRunDetail {
+  id: string;
+  capture_id: string;
+  status: "started" | "running" | "completed" | "failed" | "canceled";
+  started_at: string;
+  ended_at: string | null;
+  accepted_count: number;
+  duplicate_count: number;
+  failed_count: number;
+  error_summary: string | null;
+  events: Array<{
+    id: string;
+    message_id: string | null;
+    message_type: string | null;
+    result: "accepted" | "duplicate" | "failed";
+    error: string | null;
+    created_at: string;
+  }>;
+}
+
+interface AdapterReplayResponse {
+  run: {
+    id: string;
+    capture_id: string;
+    status: "started" | "running" | "completed" | "failed" | "canceled";
+    started_at: string;
+    ended_at: string | null;
+    accepted_count: number;
+    duplicate_count: number;
+    failed_count: number;
+    error_summary: string | null;
+  };
+}
+
 const REST_ENDPOINTS = [
   "GET /tenants/me",
   "GET /sites",
@@ -70,6 +131,11 @@ const REST_ENDPOINTS = [
   "GET /analytics/dashboard",
   "GET /analytics/cross-site?site_id=all",
   "POST /ingest/telemetry (robot_event payload requires dedupe_key; sequence supported)",
+  "GET /adapters/health",
+  "GET /adapters/captures?vendor=vendor_acme&site_id=s1",
+  "POST /adapters/captures/record",
+  "POST /adapters/replays",
+  "GET /adapters/replays/{id}",
   "GET /alerts/events",
   "GET /rbac/scopes",
   "GET /system/pipeline-status"
@@ -79,6 +145,9 @@ export default function DeveloperPage() {
   const { data: session } = useSession();
   const apiKeysQuery = useAuthedQuery<ApiKey[]>(["api-keys"], "/api-keys");
   const pipelineStatusQuery = useAuthedQuery<PipelineStatus>(["pipeline-status"], "/system/pipeline-status");
+  const adapterHealthQuery = useAuthedQuery<AdapterHealthItem[]>(["adapter-health"], "/adapters/health");
+  const adapterCapturesQuery = useAuthedQuery<AdapterCaptureItem[]>(["adapter-captures"], "/adapters/captures");
+  const replayMutation = useAuthedMutation<AdapterReplayResponse>();
   const { socket, connected } = useLiveSocket();
 
   const [selectedEndpoint, setSelectedEndpoint] = useState(REST_ENDPOINTS[0]);
@@ -86,6 +155,8 @@ export default function DeveloperPage() {
   const [auditResourceType, setAuditResourceType] = useState("all");
   const [auditAction, setAuditAction] = useState("");
   const [selectedAuditId, setSelectedAuditId] = useState("");
+  const [selectedCaptureId, setSelectedCaptureId] = useState("");
+  const [selectedReplayRunId, setSelectedReplayRunId] = useState("");
 
   const auditPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -100,6 +171,10 @@ export default function DeveloperPage() {
   }, [auditAction, auditResourceType]);
 
   const auditQuery = useAuthedQuery<AuditResponse>(["developer-audit", auditPath], auditPath);
+  const replayRunPath = selectedReplayRunId ? `/adapters/replays/${selectedReplayRunId}` : undefined;
+  const replayRunQuery = useAuthedQuery<AdapterReplayRunDetail>(["adapter-replay-run", selectedReplayRunId], replayRunPath, {
+    enabled: Boolean(replayRunPath)
+  });
 
   useEffect(() => {
     if (!socket) {
@@ -117,6 +192,12 @@ export default function DeveloperPage() {
       channels.forEach((channel) => socket.off(channel));
     };
   }, [socket]);
+
+  useEffect(() => {
+    if (!selectedCaptureId && (adapterCapturesQuery.data?.length ?? 0) > 0) {
+      setSelectedCaptureId(adapterCapturesQuery.data?.[0]?.capture_id ?? "");
+    }
+  }, [adapterCapturesQuery.data, selectedCaptureId]);
 
   const selectedAudit = (auditQuery.data?.items ?? []).find((entry) => entry.id === selectedAuditId) ?? null;
 
@@ -229,6 +310,147 @@ export default function DeveloperPage() {
           </div>
         </div>
       </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardTitle>Adapter capture and replay</CardTitle>
+          <CardMeta>Record raw payload streams and run deterministic replay diagnostics</CardMeta>
+          <label htmlFor="developer-capture-selector" className="sr-only">
+            Select capture
+          </label>
+          <select
+            id="developer-capture-selector"
+            className="mt-3 w-full rounded-2xl border border-border bg-white px-3 py-2 text-sm"
+            value={selectedCaptureId}
+            onChange={(event) => setSelectedCaptureId(event.target.value)}
+          >
+            {(adapterCapturesQuery.data ?? []).map((capture) => (
+              <option key={capture.capture_id} value={capture.capture_id}>
+                {capture.capture_id} ({capture.vendor} / {capture.adapter_name} / {capture.entry_count} entries)
+              </option>
+            ))}
+          </select>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => adapterCapturesQuery.refetch()}
+              disabled={adapterCapturesQuery.isLoading}
+            >
+              Refresh captures
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={!selectedCaptureId || replayMutation.isPending}
+              onClick={() =>
+                replayMutation.mutate(
+                  {
+                    path: "/adapters/replays",
+                    method: "POST",
+                    body: {
+                      capture_id: selectedCaptureId,
+                      deterministic_ordering: true,
+                      replay_speed_multiplier: 1,
+                      validation_only: true
+                    }
+                  },
+                  {
+                    onSuccess: (result) => setSelectedReplayRunId(result.run.id)
+                  }
+                )
+              }
+            >
+              Validation replay
+            </Button>
+            <Button
+              disabled={!selectedCaptureId || replayMutation.isPending}
+              onClick={() =>
+                replayMutation.mutate(
+                  {
+                    path: "/adapters/replays",
+                    method: "POST",
+                    body: {
+                      capture_id: selectedCaptureId,
+                      deterministic_ordering: true,
+                      replay_speed_multiplier: 1
+                    }
+                  },
+                  {
+                    onSuccess: (result) => setSelectedReplayRunId(result.run.id)
+                  }
+                )
+              }
+            >
+              Ingest replay
+            </Button>
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-border bg-surface p-3 text-sm">
+            {replayMutation.isPending ? (
+              <p className="text-muted">Running replay...</p>
+            ) : replayMutation.error ? (
+              <p className="text-rose-600">{String(replayMutation.error)}</p>
+            ) : replayMutation.data ? (
+              <div className="space-y-1 text-xs text-muted">
+                <p>Run: {replayMutation.data.run.id}</p>
+                <p>
+                  status {replayMutation.data.run.status} • accepted {replayMutation.data.run.accepted_count} • duplicate{" "}
+                  {replayMutation.data.run.duplicate_count} • failed {replayMutation.data.run.failed_count}
+                </p>
+              </div>
+            ) : (
+              <p className="text-muted">Select a capture and run replay.</p>
+            )}
+          </div>
+
+          {replayRunQuery.data ? (
+            <div className="mt-3 rounded-2xl border border-border bg-white p-3 text-xs text-muted">
+              <p>
+                Latest run detail: {replayRunQuery.data.id} ({replayRunQuery.data.status})
+              </p>
+              <p>
+                events {replayRunQuery.data.events.length} • accepted {replayRunQuery.data.accepted_count} • duplicate{" "}
+                {replayRunQuery.data.duplicate_count} • failed {replayRunQuery.data.failed_count}
+              </p>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card>
+          <CardTitle>Adapter health</CardTitle>
+          <CardMeta>Last success/error snapshots per tenant vendor adapter site</CardMeta>
+          <div className="mt-3">
+            <DataTable>
+              <Table>
+                <THead>
+                  <tr>
+                    <Th>Vendor / Adapter</Th>
+                    <Th>Site</Th>
+                    <Th>Status</Th>
+                    <Th>Last success</Th>
+                    <Th>Last error</Th>
+                  </tr>
+                </THead>
+                <tbody>
+                  {(adapterHealthQuery.data ?? []).map((row) => (
+                    <Tr key={row.id}>
+                      <Td>
+                        {row.vendor} / {row.adapter_name}
+                      </Td>
+                      <Td>{row.site_id}</Td>
+                      <Td>{row.status}</Td>
+                      <Td>{row.last_success_at ? formatDate(row.last_success_at) : "-"}</Td>
+                      <Td className="max-w-sm whitespace-normal text-xs text-muted">
+                        {row.last_error_at ? `${formatDate(row.last_error_at)} ${row.last_error ? `- ${row.last_error}` : ""}` : "-"}
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+            </DataTable>
+          </div>
+        </Card>
+      </div>
 
       <Card>
         <CardTitle>Audit log explorer</CardTitle>

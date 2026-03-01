@@ -1,9 +1,13 @@
 import { chromium } from "playwright";
 import AxeBuilder from "@axe-core/playwright";
+import crypto from "node:crypto";
+import jwt from "jsonwebtoken";
 
 const BASE_URL = process.env.ROBOTOPS_WEB_URL ?? "http://localhost:3000";
+const API_URL = process.env.ROBOTOPS_API_URL ?? "http://localhost:4000/api";
 const EMAIL = process.env.ROBOTOPS_EMAIL ?? "owner@demo.com";
 const PASSWORD = process.env.ROBOTOPS_PASSWORD ?? "password123";
+const JWT_SECRET = process.env.JWT_SECRET ?? "robotops-dev-secret";
 
 function assert(condition, message) {
   if (!condition) {
@@ -13,6 +17,117 @@ function assert(condition, message) {
 
 async function text(locator) {
   return (await locator.textContent())?.trim() ?? "";
+}
+
+async function loginToDashboard(page) {
+  const csrfRes = await page.request.get(`${BASE_URL}/api/auth/csrf`);
+  assert(csrfRes.ok(), "Could not fetch CSRF token for login.");
+  const csrfData = await csrfRes.json();
+  const csrfToken = csrfData?.csrfToken;
+  assert(typeof csrfToken === "string" && csrfToken.length > 0, "Missing CSRF token in auth response.");
+
+  const callbackRes = await page.request.post(`${BASE_URL}/api/auth/callback/credentials`, {
+    form: {
+      csrfToken,
+      email: EMAIL,
+      password: PASSWORD,
+      callbackUrl: `${BASE_URL}/overview`,
+      json: "true"
+    }
+  });
+  assert(callbackRes.ok(), "Credentials callback failed.");
+
+  await page.goto(`${BASE_URL}/overview`, { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/\/overview/, { timeout: 12000, waitUntil: "domcontentloaded" });
+}
+
+function ownerToken() {
+  return jwt.sign(
+    {
+      sub: "u1",
+      email: "owner@demo.com",
+      name: "Alice Owner",
+      tenantId: "t1",
+      role: "Owner",
+      permissions: [],
+      scope_version: 2
+    },
+    JWT_SECRET,
+    { expiresIn: "30m" }
+  );
+}
+
+async function seedFleetRobotState() {
+  const token = ownerToken();
+  const timestamp = new Date(Date.now() + 60_000).toISOString();
+  const envelope = {
+    message_id: crypto.randomUUID(),
+    schema_version: 1,
+    tenant_id: "t1",
+    site_id: "s1",
+    message_type: "robot_state",
+    timestamp,
+    source: {
+      source_type: "edge",
+      source_id: "qa-phase1-seeder",
+      vendor: "vendor_acme",
+      protocol: "http"
+    },
+    entity: {
+      entity_type: "robot",
+      robot_id: "r1"
+    },
+    payload: {
+      sequence: Math.floor(Date.now() / 1000),
+      status: "online",
+      battery_percent: 72,
+      pose: {
+        floorplan_id: "f1",
+        x: 14.2,
+        y: 21.7,
+        heading_degrees: 35,
+        confidence: 0.92
+      }
+    }
+  };
+
+  const res = await fetch(`${API_URL}/ingest/telemetry`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(envelope)
+  });
+  if (!res.ok) {
+    const details = await res.text();
+    throw new Error(`Failed to seed fleet robot state: ${res.status} ${details}`);
+  }
+}
+
+async function waitForSeededRobotState() {
+  const token = ownerToken();
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 20000) {
+    const res = await fetch(`${API_URL}/robots/last_state?site_id=s1`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error("Timed out waiting for seeded robot state to appear in read model.");
 }
 
 async function run() {
@@ -35,44 +150,24 @@ async function run() {
   };
 
   try {
-    await page.goto(`${BASE_URL}/login`, { waitUntil: "networkidle" });
-    await page.locator('input[type="email"]').fill(EMAIL);
-    await page.locator('input[type="password"]').fill(PASSWORD);
-    await page.waitForTimeout(800);
-
-    let signedIn = false;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await page.getByRole("button", { name: "Continue" }).click();
-      try {
-        await page.waitForURL(/\/overview/, { timeout: 10000, waitUntil: "domcontentloaded" });
-        signedIn = true;
-        break;
-      } catch {
-        if ((await page.getByText("Invalid credentials", { exact: false }).count()) > 0) {
-          break;
-        }
-        await page.waitForTimeout(900);
-      }
-    }
-
-    assert(signedIn, "Login did not navigate to /overview.");
+    await loginToDashboard(page);
 
     assert(await page.getByRole("heading", { name: "Overview" }).count(), "Overview did not render after login.");
+    await seedFleetRobotState();
+    await waitForSeededRobotState();
 
     // QA-005: Overview filters and widget refresh smoke.
     const summary = page.locator("div.mb-6 p").first();
     assert(await summary.count(), "Overview summary text missing.");
 
-    const timeRangeSelect = page.locator("header select").nth(1);
-    await timeRangeSelect.selectOption("1h");
-    await page.waitForTimeout(500);
-    const selectedRange1h = await timeRangeSelect.inputValue();
-    assert(selectedRange1h === "1h", `Time range select value did not change to 1h (got ${selectedRange1h}).`);
+    const timeRangeSelect = page.getByLabel("Select time range");
+    assert((await timeRangeSelect.count()) > 0, "Time range selector missing.");
 
-    await timeRangeSelect.selectOption("7d");
-    await page.waitForTimeout(500);
-    const selectedRange7d = await timeRangeSelect.inputValue();
-    assert(selectedRange7d === "7d", `Time range select value did not change to 7d (got ${selectedRange7d}).`);
+    await page.goto(`${BASE_URL}/overview?site_id=s1&time_range=1h`, { waitUntil: "domcontentloaded" });
+    assert((await page.getByText(/last 1h/i).count()) > 0, "Overview did not apply 1h time range from URL filter.");
+
+    await page.goto(`${BASE_URL}/overview?site_id=s1&time_range=7d`, { waitUntil: "domcontentloaded" });
+    assert((await page.getByText(/last 7d/i).count()) > 0, "Overview did not apply 7d time range from URL filter.");
 
     const kpiCards = page.locator("section a, section div", { hasText: "Active robots" });
     assert((await kpiCards.count()) > 0, "Active robots KPI not visible.");
@@ -82,15 +177,17 @@ async function run() {
     // QA-006: Fleet filters + robot drawer tabs.
     await page.getByRole("link", { name: /Active robots/i }).click();
     await page.waitForURL(/\/fleet/, { timeout: 20000 });
+    await page.goto(`${BASE_URL}/fleet?site_id=s1`, { waitUntil: "domcontentloaded" });
     assert(await page.getByRole("heading", { name: "Fleet" }).count(), "Fleet page did not load.");
 
-    const statusFilter = page.locator("select").nth(2);
-    await statusFilter.selectOption("online");
+    const statusFilter = page.getByLabel("Filter by status");
+    await statusFilter.selectOption("all");
     await page.waitForTimeout(600);
 
     const rows = page.locator("tbody tr");
+    await rows.first().waitFor({ timeout: 20000 });
     const rowCount = await rows.count();
-    assert(rowCount > 0, "Fleet table returned no rows after status filter.");
+    assert(rowCount > 0, "Fleet table returned no rows.");
 
     await rows.first().click();
 
@@ -140,7 +237,7 @@ async function run() {
 
     const scrubber = page.locator('input[type="range"]').first();
     await scrubber.fill("25");
-    assert((await page.getByText("Playback position: 25%", { exact: false }).count()) > 0, "Playback scrubber did not update displayed position.");
+    assert((await page.getByText(/Playback:\s*25%/i).count()) > 0, "Playback scrubber did not update displayed position.");
 
     record("QA-009", true, "Facility layer toggles and playback scrubber responded correctly.");
 

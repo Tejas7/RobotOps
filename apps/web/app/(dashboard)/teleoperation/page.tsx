@@ -37,7 +37,7 @@ interface SessionRecord {
 
 export default function TeleoperationPage() {
   const searchParams = useSearchParams();
-  const source = (searchParams.get("source") as "incident" | "robot" | null) ?? "robot";
+  const source = (searchParams?.get("source") as "incident" | "robot" | null) ?? "robot";
 
   const { siteId } = useGlobalFilters();
   const { can } = useRbac();

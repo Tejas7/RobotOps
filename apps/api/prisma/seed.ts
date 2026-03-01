@@ -8,6 +8,9 @@ async function main() {
   await prisma.alertRule.deleteMany();
   await prisma.alertPolicyStep.deleteMany();
   await prisma.alertPolicy.deleteMany();
+  await prisma.adapterReplayRunEvent.deleteMany();
+  await prisma.adapterReplayRun.deleteMany();
+  await prisma.adapterHealthState.deleteMany();
   await prisma.roleScopeOverride.deleteMany();
   await prisma.tenantAnalyticsRollupHourly.deleteMany();
   await prisma.siteAnalyticsRollupHourly.deleteMany();
@@ -1758,6 +1761,115 @@ async function main() {
           checked_at: "2026-02-25T20:05:00Z"
         },
         createdAt: new Date("2026-02-25T20:05:00Z")
+      }
+    ]
+  });
+
+  await prisma.adapterHealthState.createMany({
+    data: [
+      {
+        id: "ahs1",
+        tenantId: "t1",
+        siteId: "s1",
+        vendor: "vendor_acme",
+        adapterName: "demo_polling",
+        status: "healthy",
+        lastSuccessAt: new Date("2026-02-27T21:00:00Z"),
+        lastErrorAt: null,
+        lastError: null,
+        lastRunId: "arr1",
+        updatedAt: new Date("2026-02-27T21:00:00Z")
+      },
+      {
+        id: "ahs2",
+        tenantId: "t1",
+        siteId: "s1",
+        vendor: "vendor_beta",
+        adapterName: "demo_streaming",
+        status: "error",
+        lastSuccessAt: new Date("2026-02-26T18:00:00Z"),
+        lastErrorAt: new Date("2026-02-27T20:30:00Z"),
+        lastError: "Simulated stream disconnect during replay",
+        lastRunId: "arr2",
+        updatedAt: new Date("2026-02-27T20:30:00Z")
+      }
+    ]
+  });
+
+  await prisma.adapterReplayRun.createMany({
+    data: [
+      {
+        id: "arr1",
+        tenantId: "t1",
+        captureId: "seed-capture-vendor-acme",
+        status: "completed",
+        startedAt: new Date("2026-02-27T20:55:00Z"),
+        endedAt: new Date("2026-02-27T21:00:00Z"),
+        acceptedCount: 12,
+        duplicateCount: 2,
+        failedCount: 0,
+        options: {
+          replay_speed_multiplier: 1,
+          deterministic_ordering: true
+        },
+        errorSummary: null,
+        createdBy: "u3",
+        createdAt: new Date("2026-02-27T20:55:00Z"),
+        updatedAt: new Date("2026-02-27T21:00:00Z")
+      },
+      {
+        id: "arr2",
+        tenantId: "t1",
+        captureId: "seed-capture-vendor-beta",
+        status: "failed",
+        startedAt: new Date("2026-02-27T20:20:00Z"),
+        endedAt: new Date("2026-02-27T20:30:00Z"),
+        acceptedCount: 7,
+        duplicateCount: 1,
+        failedCount: 3,
+        options: {
+          replay_speed_multiplier: 2,
+          deterministic_ordering: true
+        },
+        errorSummary: "3 entries failed canonical transform",
+        createdBy: "u3",
+        createdAt: new Date("2026-02-27T20:20:00Z"),
+        updatedAt: new Date("2026-02-27T20:30:00Z")
+      }
+    ]
+  });
+
+  await prisma.adapterReplayRunEvent.createMany({
+    data: [
+      {
+        id: "arre1",
+        tenantId: "t1",
+        runId: "arr1",
+        messageId: "11111111-1111-4111-8111-111111111111",
+        messageType: "robot_state",
+        result: "accepted",
+        error: null,
+        createdAt: new Date("2026-02-27T20:56:00Z")
+      },
+      {
+        id: "arre2",
+        tenantId: "t1",
+        runId: "arr1",
+        messageId: "22222222-2222-4222-8222-222222222222",
+        messageType: "robot_event",
+        result: "duplicate",
+        error: null,
+        createdAt: new Date("2026-02-27T20:57:00Z")
+      },
+      {
+        id: "arre3",
+        tenantId: "t1",
+        runId: "arr2",
+        messageId: null,
+        messageType: null,
+        result: "failed",
+        error: "Raw payload missing robot_id",
+        createdAt: new Date("2026-02-27T20:22:00Z")
       }
     ]
   });

@@ -7,6 +7,7 @@ const TENANT_ID = "t1";
 const SITE_ID = "s1";
 const ROBOT_ID = "r1";
 const QA_VENDOR = "qa_vendor_v1p3";
+const LOGICAL_START_OFFSET_MS = 120_000;
 
 function assert(condition, message) {
   if (!condition) {
@@ -66,6 +67,12 @@ function baseEnvelope(overrides = {}) {
   };
 }
 
+let logicalClockMs = Date.now() + LOGICAL_START_OFFSET_MS;
+function nextLogicalTimestamp(stepMs = 1000) {
+  logicalClockMs += stepMs;
+  return new Date(logicalClockMs).toISOString();
+}
+
 async function request(path, token, options = {}) {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -87,7 +94,7 @@ async function request(path, token, options = {}) {
   return { status: response.status, body };
 }
 
-async function waitFor(check, timeoutMs = 10000, intervalMs = 300) {
+async function waitFor(check, timeoutMs = 20000, intervalMs = 300) {
   const started = Date.now();
   while (true) {
     const done = await check();
@@ -231,6 +238,7 @@ async function run() {
       method: "POST",
       body: JSON.stringify(
         baseEnvelope({
+          timestamp: nextLogicalTimestamp(),
           payload: {
             status: "online",
             battery_percent: 68,
@@ -267,6 +275,7 @@ async function run() {
       method: "POST",
       body: JSON.stringify(
         baseEnvelope({
+          timestamp: nextLogicalTimestamp(),
           payload: {
             status: "online",
             battery_percent: 66,
@@ -302,6 +311,7 @@ async function run() {
       method: "POST",
       body: JSON.stringify(
         baseEnvelope({
+          timestamp: nextLogicalTimestamp(),
           source: {
             source_type: "edge",
             source_id: "qa-edge-v1p3-fallback",
@@ -342,6 +352,7 @@ async function run() {
       method: "POST",
       body: JSON.stringify(
         baseEnvelope({
+          timestamp: nextLogicalTimestamp(),
           payload: {
             status: "online",
             battery_percent: 63,

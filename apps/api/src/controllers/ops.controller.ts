@@ -407,6 +407,39 @@ export class OpsController {
     });
   }
 
+  @Get("adapters/health")
+  @RequireAnyPermissions("integrations.read", "config.read")
+  listAdapterHealth(@CurrentUser() user: RequestUser) {
+    return this.phase3Service.listAdapterHealth(user.tenantId);
+  }
+
+  @Get("adapters/captures")
+  @RequirePermissions("integrations.read")
+  listAdapterCaptures(@CurrentUser() user: RequestUser, @Query("site_id") siteId?: string, @Query("vendor") vendor?: string) {
+    return this.phase3Service.listAdapterCaptures(user.tenantId, {
+      site_id: siteId,
+      vendor
+    });
+  }
+
+  @Post("adapters/captures/record")
+  @RequirePermissions("integrations.manage")
+  recordAdapterCapture(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.recordAdapterCapture(user.tenantId, user, body);
+  }
+
+  @Post("adapters/replays")
+  @RequireAnyPermissions("integrations.manage", "telemetry.ingest")
+  createAdapterReplay(@CurrentUser() user: RequestUser, @Body() body: unknown) {
+    return this.phase3Service.createAdapterReplay(user.tenantId, user, body);
+  }
+
+  @Get("adapters/replays/:id")
+  @RequirePermissions("integrations.read")
+  getAdapterReplayRun(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.phase3Service.getAdapterReplayRun(user.tenantId, id);
+  }
+
   @Post("ingest/telemetry")
   @RequirePermissions("telemetry.ingest")
   ingestTelemetry(@CurrentUser() user: RequestUser, @Body() body: unknown) {

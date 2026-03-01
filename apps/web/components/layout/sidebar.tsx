@@ -16,7 +16,7 @@ export function Sidebar() {
       </div>
       <nav className="mt-8 space-y-1">
         {NAV_ITEMS.map((item) => {
-          const active = pathname.startsWith(item.href);
+          const active = (pathname ?? "").startsWith(item.href);
           return (
             <Link
               key={item.href}
