@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardMeta, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,9 @@ import { StatusChip } from "@/components/ui/status-chip";
 import { DataTable, Table, THead, Th, Tr, Td } from "@/components/ui/table";
 import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
+import { type LiveDeltaPayload, useLiveSocket } from "@/hooks/use-live-socket";
 import { useRbac } from "@/hooks/use-rbac";
+import { reconcileLiveDelta } from "@/lib/live-reconcile";
 import { useGlobalFilters } from "@/store/use-global-filters";
 import { formatDate } from "@/lib/utils";
 
@@ -113,6 +115,10 @@ function rangeToFromIso(range: (typeof TELEMETRY_RANGES)[number]) {
 export default function FleetPage() {
   const { siteId } = useGlobalFilters();
   const { can } = useRbac();
+  const { socket } = useLiveSocket({
+    siteId,
+    streams: ["robot_last_state"]
+  });
 
   const [selectedRobotId, setSelectedRobotId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("Summary");
@@ -124,6 +130,8 @@ export default function FleetPage() {
 
   const [telemetryMetric, setTelemetryMetric] = useState<(typeof TELEMETRY_METRICS)[number]>("battery");
   const [telemetryRange, setTelemetryRange] = useState<(typeof TELEMETRY_RANGES)[number]>("24h");
+  const [liveRobotRows, setLiveRobotRows] = useState<Robot[] | null>(null);
+  const robotCursorRef = useRef<string | undefined>(undefined);
 
   const robotsQuery = useAuthedQuery<Robot[]>(
     ["fleet-robots", siteId, statusFilter, vendorFilter, tagFilter, capabilityFilter, batteryMin],
@@ -132,16 +140,19 @@ export default function FleetPage() {
     }${tagFilter !== "all" ? `&tag=${tagFilter}` : ""}`
   );
 
-  const robotRows = robotsQuery.data ?? [];
+  const robotRows = liveRobotRows ?? robotsQuery.data ?? [];
   const robots = useMemo(() => {
     const parsedBatteryMin = Number(batteryMin);
     const batteryThreshold = Number.isFinite(parsedBatteryMin) ? parsedBatteryMin : 0;
     return robotRows.filter((robot) => {
+      const statusPass = statusFilter === "all" ? true : robot.status === statusFilter;
+      const vendorPass = vendorFilter === "all" ? true : robot.vendor?.id === vendorFilter;
+      const tagPass = tagFilter === "all" ? true : robot.tags.includes(tagFilter);
       const capabilityPass = capabilityFilter === "all" ? true : robot.capabilities.includes(capabilityFilter);
       const batteryPass = robot.batteryPercent >= batteryThreshold;
-      return capabilityPass && batteryPass;
+      return statusPass && vendorPass && tagPass && capabilityPass && batteryPass;
     });
-  }, [batteryMin, capabilityFilter, robotRows]);
+  }, [batteryMin, capabilityFilter, robotRows, statusFilter, tagFilter, vendorFilter]);
 
   const selectedRobot = useMemo(
     () => (selectedRobotId ? robots.find((robot) => robot.id === selectedRobotId) : null),
@@ -179,6 +190,51 @@ export default function FleetPage() {
   const availableVendors = Array.from(new Map(robotRows.map((robot) => [robot.vendor.id, robot.vendor])).values());
 
   const hasRobotControl = can("robots.control");
+
+  useEffect(() => {
+    setLiveRobotRows(null);
+    robotCursorRef.current = undefined;
+  }, [batteryMin, capabilityFilter, siteId, statusFilter, tagFilter, vendorFilter]);
+
+  useEffect(() => {
+    if (!socket) {
+      return;
+    }
+
+    const mapRobot = (value: unknown): Robot | null => {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const row = value as { id?: unknown };
+      if (typeof row.id !== "string") {
+        return null;
+      }
+      return value as Robot;
+    };
+
+    const onDelta = (payload: LiveDeltaPayload<unknown>) => {
+      setLiveRobotRows((current) => {
+        const reconciled = reconcileLiveDelta<Robot>({
+          expectedStream: "robot_last_state",
+          envelope: payload,
+          currentCursor: robotCursorRef.current,
+          currentItems: current ?? robotsQuery.data ?? [],
+          mapUpsert: mapRobot,
+          sort: (left, right) => left.name.localeCompare(right.name)
+        });
+        if (!reconciled.applied) {
+          return current;
+        }
+        robotCursorRef.current = reconciled.cursor;
+        return reconciled.items;
+      });
+    };
+
+    socket.on("delta", onDelta);
+    return () => {
+      socket.off("delta", onDelta);
+    };
+  }, [robotsQuery.data, socket]);
 
   function closeDrawer() {
     setSelectedRobotId(null);

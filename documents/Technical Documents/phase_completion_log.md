@@ -87,14 +87,47 @@ Required fields per entry:
   - `npm run qa:v1:phase4` regression (pass)
   - `npm run qa:v1:phase5` (pass)
 
+### 2026-03-01 - V1 Phase 6
+- Status: completed (agent workflow)
+- Scope summary: socket live transport optimized to cursor-based delta protocol (`subscribe`/`delta`) with dual-mode compatibility, stream coalescing buffers, stream catch-up snapshots, live transport metrics in pipeline status, and frontend delta reconciliation across Overview/Fleet/Facility/Missions/Incidents/Developer.
+- Verification noted in repo workflow:
+  - `npm run typecheck` (pass)
+  - `npm run build` (pass)
+  - `npm run qa:phase1` regression (pass)
+  - `npm run qa:phase2` regression (pass)
+  - `npm run qa:phase3` regression (pass)
+  - `npm run qa:v1:phase1` regression (pass)
+  - `npm run qa:v1:phase2` regression (pass)
+  - `npm run qa:v1:phase3` regression (pass)
+  - `npm run qa:v1:phase4` regression (pass)
+  - `npm run qa:v1:phase5` regression (pass)
+  - `npm run qa:v1:phase6` (pass)
+- 2026-03-01 review/test refresh:
+  - Reviewer fixes applied:
+    - Fleet/Incidents live cache reset now tracks filter changes to avoid stale partial datasets during filter toggles.
+    - `subscribe` catch-up failure path now rolls back joined delta rooms before returning `subscribe.error`.
+  - Re-verified:
+    - `npm run typecheck` (pass)
+    - `npm run build` (pass)
+    - `npm run qa:phase1` (pass)
+    - `npm run qa:phase2` (pass)
+    - `npm run qa:phase3` (pass)
+    - `npm run qa:v1:phase1` (pass)
+    - `npm run qa:v1:phase2` (pass)
+    - `npm run qa:v1:phase3` (pass)
+    - `npm run qa:v1:phase4` (pass)
+    - `npm run qa:v1:phase5` (pass)
+    - `npm run qa:v1:phase6` (pass)
+
 ## Last Technical Docs Sync
-- Date: 2026-02-28
+- Date: 2026-03-01
 - Updated by: agent
 - Files refreshed:
+  - `documents/Implementation Plan/V1/implementation_plan_phase6.md`
   - `documents/Implementation Plan/V1/implementation_plan_phase5.md`
   - `README.md`
   - `documents/Technical Documents/backend_api_reference.md`
-  - `documents/Technical Documents/data_model_and_storage.md`
   - `documents/Technical Documents/realtime_ingestion_and_alerting.md`
+  - `documents/Technical Documents/frontend_architecture.md`
   - `documents/Technical Documents/testing_qa_and_operations.md`
   - `documents/Technical Documents/phase_completion_log.md`

@@ -18,6 +18,7 @@ Robotics operations and orchestration dashboard for heterogeneous fleets.
 - V1 Phase 3: `VendorSiteMap` mapping + ingest transform path to keep vendor pose in RobotOps floorplan coordinates, with Settings visual transform editor and preview API.
 - V1 Phase 4: dedupe windows + deterministic ordering hardened (`robot_event` `dedupe_key` required, sequence-aware processing, robot/task cursors, and no-duplicate/no-jitter ingest side effects).
 - V1 Phase 5: adapter capture/replay harness with deterministic replay through canonical ingest, adapter health APIs, replay diagnostics persistence, and adapter CLI workflows.
+- V1 Phase 6: Socket.IO delta protocol (`subscribe`/`delta`) with opaque cursors, per-stream coalescing, dual-mode rollout compatibility, and page-level delta reconciliation for Overview/Fleet/Facility/Missions/Incidents/Developer.
 
 ## Technical documentation
 - Technical source of truth: `documents/Technical Documents/`
@@ -104,6 +105,7 @@ npm run qa:v1:phase2
 npm run qa:v1:phase3
 npm run qa:v1:phase4
 npm run qa:v1:phase5
+npm run qa:v1:phase6
 npm run qa:phase1
 npm run qa:phase2
 npm run qa:phase3
@@ -140,8 +142,9 @@ Local capture files are written to `.data/adapter-captures/` (manifest + JSONL e
 ## Notes
 - JWT tenant + role + permissions are issued by NextAuth credentials login.
 - Backend enforces tenant scoping and RBAC for protected endpoints.
-- Live channels emitted: `robots.live`, `incidents.live`, `missions.live`, `telemetry.live`.
-- Phase 3 adds `alerts.live` plus `/system/pipeline-status` for ingestion/rollup readiness.
+- Phase 6 live protocol primary path: Socket.IO `subscribe` + `delta` with stream cursors (`robot_last_state`, `incidents`, `missions`).
+- Legacy compatibility remains in dual mode: `live.subscribe` + `robots.live`/`incidents.live`/`missions.live`/`telemetry.live`/`alerts.live`.
+- `/system/pipeline-status` includes live transport counters (`mode`, connected/subscribed clients, message and byte totals, last flush timestamp).
 - Dashboard branding uses the RobotOps logo on login and shell navigation.
 - Floorplan overlay assets use PNG files under `apps/web/public/static/floorplans`.
 - New backend env vars for Phase 3: `NATS_URL`, `NATS_STREAM`, `NATS_SUBJECT_TELEMETRY`, `ROLLUP_JOB_INTERVAL_SECONDS`, `ALERT_ENGINE_INTERVAL_SECONDS`, `TIMESCALE_RAW_RETENTION_DAYS`, `TIMESCALE_ROLLUP_RETENTION_DAYS`.

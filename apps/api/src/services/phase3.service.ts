@@ -1310,6 +1310,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         tenantHourlyLatest: latestTenant?.bucketStart.toISOString() ?? null,
         freshnessSeconds
       },
+      live: this.live.getLiveMetrics(),
       timescale
     };
   }
@@ -2264,6 +2265,8 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    this.live.publishRobotLastStateUpsert(tenantId, envelope.site_id, envelope.entity.robot_id);
+
     if (payload.metrics) {
       const pointTimestamp = new Date(envelope.timestamp);
       for (const [metric, value] of Object.entries(payload.metrics)) {
@@ -2378,6 +2381,8 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
       title: payload.title,
       timestamp: payload.occurred_at ?? envelope.timestamp
     });
+
+    this.live.publishIncidentUpsert(tenantId, envelope.site_id, incident.id);
 
     return { applied: true };
   }
@@ -2532,6 +2537,8 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
         message: payload.message ?? null
       }
     });
+
+    this.live.publishMissionUpsert(tenantId, envelope.site_id, mission.id);
 
     this.emitLive(tenantId, "missions.live", {
       type: "task_status",
@@ -4135,14 +4142,7 @@ export class Phase3Service implements OnModuleInit, OnModuleDestroy {
   }
 
   private emitLive(tenantId: string, channel: string, data: unknown) {
-    if (!this.live.server) {
-      return;
-    }
-    this.live.server.to(`tenant:${tenantId}`).emit(channel, {
-      channel,
-      timestamp: new Date().toISOString(),
-      data
-    });
+    this.live.publishLegacy(tenantId, channel, data);
   }
 
   private toJson(value: unknown): Prisma.InputJsonValue {

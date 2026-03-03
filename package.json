@@ -16,6 +16,7 @@
     "qa:v1:phase3": "node scripts/v1-phase3-qa.mjs",
     "qa:v1:phase4": "node scripts/v1-phase4-qa.mjs",
     "qa:v1:phase5": "node scripts/v1-phase5-qa.mjs",
+    "qa:v1:phase6": "node scripts/v1-phase6-qa.mjs",
     "adapter:record": "node scripts/adapter-record.mjs",
     "adapter:replay": "node scripts/adapter-replay.mjs",
     "adapter:validate": "node scripts/adapter-validate.mjs",

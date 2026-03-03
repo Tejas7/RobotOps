@@ -43,6 +43,47 @@ function getJwtSecret() {
   return process.env.JWT_SECRET ?? "robotops-dev-secret";
 }
 
+const API_ACCESS_TOKEN_TTL_SECONDS = 30 * 60;
+const API_ACCESS_TOKEN_REFRESH_LEEWAY_SECONDS = 60;
+
+function issueApiAccessToken(input: {
+  id: string;
+  email: string;
+  name: string;
+  tenantId: string;
+  role: Role;
+  permissions: string[];
+  scopeVersion: number;
+}) {
+  return jwt.sign(
+    {
+      sub: input.id,
+      email: input.email,
+      name: input.name,
+      tenantId: input.tenantId,
+      role: input.role,
+      permissions: input.permissions,
+      scope_version: input.scopeVersion
+    },
+    getJwtSecret(),
+    { expiresIn: `${API_ACCESS_TOKEN_TTL_SECONDS}s` }
+  );
+}
+
+function shouldRefreshApiAccessToken(tokenValue: unknown) {
+  if (typeof tokenValue !== "string" || !tokenValue) {
+    return true;
+  }
+  const decoded = jwt.decode(tokenValue);
+  if (!decoded || typeof decoded === "string") {
+    return true;
+  }
+  if (typeof decoded.exp !== "number") {
+    return true;
+  }
+  return decoded.exp * 1000 - Date.now() <= API_ACCESS_TOKEN_REFRESH_LEEWAY_SECONDS * 1000;
+}
+
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET ?? "robotops-nextauth-secret",
   session: {
@@ -69,19 +110,15 @@ export const authOptions: NextAuthOptions = {
         }
 
         const permissions = normalizePermissions(permissionsForRole(matched.role));
-        const accessToken = jwt.sign(
-          {
-            sub: matched.id,
-            email: matched.email,
-            name: matched.name,
-            tenantId: matched.tenantId,
-            role: matched.role,
-            permissions,
-            scope_version: 2
-          },
-          getJwtSecret(),
-          { expiresIn: "30m" }
-        );
+        const accessToken = issueApiAccessToken({
+          id: matched.id,
+          email: matched.email,
+          name: matched.name,
+          tenantId: matched.tenantId,
+          role: matched.role,
+          permissions,
+          scopeVersion: 2
+        });
 
         return {
           id: matched.id,
@@ -107,6 +144,22 @@ export const authOptions: NextAuthOptions = {
         token.permissions = normalizePermissions((user as any).permissions ?? []);
         token.scopeVersion = (user as any).scopeVersion ?? 2;
         token.accessToken = (user as any).accessToken;
+      }
+
+      const role = ((token.role as Role | undefined) ?? "Viewer") as Role;
+      const permissions = normalizePermissions((token.permissions as string[] | undefined) ?? permissionsForRole(role));
+      token.permissions = permissions;
+      token.scopeVersion = (token.scopeVersion as number | undefined) ?? 2;
+      if (shouldRefreshApiAccessToken(token.accessToken) && typeof token.sub === "string" && typeof token.tenantId === "string") {
+        token.accessToken = issueApiAccessToken({
+          id: token.sub,
+          email: typeof token.email === "string" ? token.email : `${token.sub}@robotops.local`,
+          name: typeof token.name === "string" ? token.name : token.sub,
+          tenantId: token.tenantId,
+          role,
+          permissions,
+          scopeVersion: token.scopeVersion as number
+        });
       }
       return token;
     },

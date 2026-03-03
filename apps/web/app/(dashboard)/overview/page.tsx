@@ -5,7 +5,8 @@ import type { Route } from "next";
 import { BookmarkPlus, ShieldCheck } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { LiveDeltaPayload } from "@/hooks/use-live-socket";
 import { ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
@@ -15,6 +16,7 @@ import { Card, CardMeta, CardTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { PageTitle } from "@/components/pages/page-title";
 import { FacilityMap } from "@/components/pages/facility-map";
+import { reconcileLiveDelta } from "@/lib/live-reconcile";
 import { formatDate } from "@/lib/utils";
 
 interface Robot {
@@ -85,7 +87,10 @@ export default function OverviewPage() {
   const searchParams = useSearchParams();
   const effectiveSiteId = searchParams?.get("site_id") ?? siteId;
   const effectiveTimeRange = searchParams?.get("time_range") ?? timeRange;
-  const { socket } = useLiveSocket();
+  const { socket } = useLiveSocket({
+    siteId: effectiveSiteId,
+    streams: ["robot_last_state", "incidents"]
+  });
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [defaultApplied, setDefaultApplied] = useState(false);
 
@@ -101,6 +106,8 @@ export default function OverviewPage() {
 
   const [liveRobots, setLiveRobots] = useState<Robot[] | null>(null);
   const [liveIncidents, setLiveIncidents] = useState<Incident[] | null>(null);
+  const robotCursorRef = useRef<string | undefined>(undefined);
+  const incidentCursorRef = useRef<string | undefined>(undefined);
   const robots = liveRobots ?? robotsQuery.data ?? [];
   const missions = missionsQuery.data ?? [];
   const incidents = liveIncidents ?? incidentsQuery.data ?? [];
@@ -206,24 +213,84 @@ export default function OverviewPage() {
   }, [defaultApplied, savedViewsQuery.data, searchParams, session?.user?.role, setSiteId, setTimeRange, siteId, timeRange]);
 
   useEffect(() => {
+    setLiveRobots(null);
+    setLiveIncidents(null);
+    robotCursorRef.current = undefined;
+    incidentCursorRef.current = undefined;
+  }, [effectiveSiteId]);
+
+  useEffect(() => {
     if (!socket) {
       return;
     }
-    const onRobots = (payload: { data: Array<Robot & { siteId?: string }> }) => {
-      if (effectiveSiteId === "all") {
-        setLiveRobots(payload.data);
-        return;
+
+    const toRobot = (value: unknown): Robot | null => {
+      if (!value || typeof value !== "object") {
+        return null;
       }
-      setLiveRobots(payload.data.filter((robot) => robot.siteId === effectiveSiteId));
+      const record = value as { id?: unknown };
+      if (typeof record.id !== "string") {
+        return null;
+      }
+      return value as Robot;
     };
-    const onIncidents = (payload: { data: Incident[] }) => setLiveIncidents(payload.data);
-    socket.on("robots.live", onRobots);
-    socket.on("incidents.live", onIncidents);
+
+    const toIncident = (value: unknown): Incident | null => {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const record = value as { id?: unknown };
+      if (typeof record.id !== "string") {
+        return null;
+      }
+      return value as Incident;
+    };
+
+    const onDelta = (payload: LiveDeltaPayload<unknown>) => {
+      if (payload.stream === "robot_last_state") {
+        setLiveRobots((current) => {
+          const base = current ?? robotsQuery.data ?? [];
+          const reconciled = reconcileLiveDelta<Robot>({
+            expectedStream: "robot_last_state",
+            envelope: payload,
+            currentCursor: robotCursorRef.current,
+            currentItems: base,
+            mapUpsert: toRobot,
+            sort: (left, right) => left.name.localeCompare(right.name)
+          });
+          if (!reconciled.applied) {
+            return current;
+          }
+          robotCursorRef.current = reconciled.cursor;
+          return reconciled.items;
+        });
+      }
+
+      if (payload.stream === "incidents") {
+        setLiveIncidents((current) => {
+          const base = current ?? incidentsQuery.data ?? [];
+          const reconciled = reconcileLiveDelta<Incident>({
+            expectedStream: "incidents",
+            envelope: payload,
+            currentCursor: incidentCursorRef.current,
+            currentItems: base,
+            mapUpsert: toIncident,
+            sort: (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+          });
+          if (!reconciled.applied) {
+            return current;
+          }
+          incidentCursorRef.current = reconciled.cursor;
+          return reconciled.items;
+        });
+      }
+    };
+
+    socket.on("delta", onDelta);
     return () => {
-      socket.off("robots.live", onRobots);
-      socket.off("incidents.live", onIncidents);
+      socket.off("delta", onDelta);
     };
-  }, [effectiveSiteId, socket]);
+  }, [incidentsQuery.data, robotsQuery.data, socket]);
 
   const activeRobots = robots.filter((robot) => robot.status === "online" || robot.status === "degraded").length;
   const uptimePercent = robots.length ? Math.round((robots.filter((robot) => robot.status === "online").length / robots.length) * 100) : 0;

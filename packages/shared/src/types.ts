@@ -170,6 +170,7 @@ export interface Mission {
   failureCode: string | null;
   failureMessage: string | null;
   lastEventId: string | null;
+  updatedAt: string;
 }
 
 export interface MissionEvent {
@@ -193,6 +194,7 @@ export interface Incident {
   title: string;
   description: string;
   createdAt: string;
+  updatedAt: string;
   acknowledgedBy: string | null;
   resolvedAt: string | null;
 }

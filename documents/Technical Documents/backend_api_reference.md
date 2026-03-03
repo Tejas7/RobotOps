@@ -7,6 +7,38 @@ Base URL: `http://localhost:4000/api`
 - Guard chain on protected controllers: `JwtAuthGuard` + `PermissionsGuard`.
 - JWT payload fields used by API: `sub`, `tenantId`, `role`, `permissions`, `scope_version`.
 
+## Socket.IO Live Protocol (V1 Phase 6)
+Primary realtime contract:
+- client subscribe event: `subscribe`
+- server ack event: `subscribed`
+- server error event: `subscribe.error`
+- server delta event: `delta`
+
+Dual-mode compatibility:
+- legacy client event `live.subscribe` remains accepted while `LIVE_UPDATES_MODE=dual`.
+- legacy full-array broadcasts are restricted to legacy subscribers and disabled when `LIVE_UPDATES_MODE=delta_only`.
+
+`subscribe` payload:
+- `tenant_id?` (optional, must match JWT tenant when provided)
+- `site_id` (`all` or tenant site id)
+- `streams` (`robot_last_state|incidents|missions`)
+- `cursor?` per stream (opaque cursor string)
+
+`delta` payload:
+- `stream`
+- `cursor` (opaque `v=1` cursor)
+- `upserts[]`
+- `deletes[]`
+- `snapshot` (true for initial catch-up batches)
+- `batch_index`, `batch_total`
+
+Cursor semantics:
+- encoded base64url JSON `{\"v\":1,\"t\":\"<iso>\",\"id\":\"<entity id>\"}`
+- stream sort keys:
+  - `robot_last_state`: `(updatedAt, robotId)`
+  - `incidents`: `(updatedAt, incidentId)`
+  - `missions`: `(updatedAt, missionId)`
+
 ## Public
 | Method | Path | Permission | Notes |
 |---|---|---|---|
@@ -143,7 +175,7 @@ Transform behavior when mapping matches:
 | GET | `/rbac/scopes` | `rbac.read` | Scope catalog, aliases, deprecated scopes, version. |
 | GET | `/rbac/roles` | `rbac.read` | Role base/effective scope matrix with tenant overrides. |
 | PATCH | `/rbac/roles/:role` | `rbac.write` | Upsert role scope overrides (`allow_scopes`,`deny_scopes`). |
-| GET | `/system/pipeline-status` | `config.read` | NATS, ingestion queue, rollup freshness, Timescale status. |
+| GET | `/system/pipeline-status` | `config.read` | NATS, ingestion queue, rollup freshness, Timescale status, and live transport counters (`mode`, connected/subscribed clients, delta/legacy msg+bytes, last flush). |
 
 ## Copilot APIs
 Controller prefix: `/copilot`

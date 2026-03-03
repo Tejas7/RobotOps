@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LIVE_STREAMS, decodeLiveCursor } from "./live";
 
 export const robotActionSchema = z.object({
   action: z.enum(["dock", "pause", "resume", "speed_limit"]),
@@ -516,6 +517,53 @@ export const roleScopeOverridePatchSchema = z.object({
   deny_scopes: z.array(z.string().min(1)).optional().default([])
 });
 
+export const liveStreamNameSchema = z.enum(LIVE_STREAMS);
+
+export const liveSubscribeSchema = z
+  .object({
+    tenant_id: z.string().min(1).optional(),
+    site_id: z.string().min(1),
+    streams: z.array(liveStreamNameSchema).min(1),
+    cursor: z
+      .object({
+        robot_last_state: z.string().min(1).optional(),
+        incidents: z.string().min(1).optional(),
+        missions: z.string().min(1).optional()
+      })
+      .partial()
+      .optional()
+  })
+  .superRefine((input, ctx) => {
+    if (!input.cursor) {
+      return;
+    }
+
+    for (const [stream, cursor] of Object.entries(input.cursor)) {
+      if (!cursor) {
+        continue;
+      }
+
+      const decoded = decodeLiveCursor(cursor);
+      if (!decoded) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cursor", stream],
+          message: "Invalid live cursor format"
+        });
+      }
+    }
+  });
+
+export const liveDeltaEnvelopeSchema = z.object({
+  stream: liveStreamNameSchema,
+  cursor: z.string().min(1),
+  upserts: z.array(z.unknown()),
+  deletes: z.array(z.string()),
+  snapshot: z.boolean(),
+  batch_index: z.coerce.number().int().positive(),
+  batch_total: z.coerce.number().int().positive()
+});
+
 export type RobotActionInput = z.infer<typeof robotActionSchema>;
 export type MissionCreateInput = z.infer<typeof missionCreateSchema>;
 export type IncidentResolveInput = z.infer<typeof incidentResolveSchema>;
@@ -552,3 +600,6 @@ export type AlertRuleCreateInput = z.infer<typeof alertRuleCreateSchema>;
 export type AlertRulePatchInput = z.infer<typeof alertRulePatchSchema>;
 export type AlertTestRouteInput = z.infer<typeof alertTestRouteSchema>;
 export type RoleScopeOverridePatchInput = z.infer<typeof roleScopeOverridePatchSchema>;
+export type LiveStreamNameInput = z.infer<typeof liveStreamNameSchema>;
+export type LiveSubscribeInput = z.infer<typeof liveSubscribeSchema>;
+export type LiveDeltaEnvelopeInput = z.infer<typeof liveDeltaEnvelopeSchema>;

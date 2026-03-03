@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardMeta, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,9 @@ import { PageTitle } from "@/components/pages/page-title";
 import { StatusChip } from "@/components/ui/status-chip";
 import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
+import { type LiveDeltaPayload, useLiveSocket } from "@/hooks/use-live-socket";
 import { useRbac } from "@/hooks/use-rbac";
+import { reconcileLiveDelta } from "@/lib/live-reconcile";
 import { useGlobalFilters } from "@/store/use-global-filters";
 import { formatDate } from "@/lib/utils";
 
@@ -66,6 +68,10 @@ interface AlertEventResponse {
 
 export default function IncidentsPage() {
   const { siteId } = useGlobalFilters();
+  const { socket } = useLiveSocket({
+    siteId,
+    streams: ["incidents"]
+  });
   const { canAny } = useRbac();
   const [severity, setSeverity] = useState("all");
   const [category, setCategory] = useState("all");
@@ -73,6 +79,8 @@ export default function IncidentsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resolveNote, setResolveNote] = useState("Issue mitigated by operator workflow update.");
   const [confirmResolve, setConfirmResolve] = useState(false);
+  const [liveIncidentRows, setLiveIncidentRows] = useState<Incident[] | null>(null);
+  const incidentCursorRef = useRef<string | undefined>(undefined);
 
   const incidentsQuery = useAuthedQuery<Incident[]>(
     ["incidents", siteId, severity, category, status],
@@ -91,13 +99,70 @@ export default function IncidentsPage() {
   const resolveMutation = useAuthedMutation<Incident>();
   const alertAckMutation = useAuthedMutation();
 
+  const incidentRows = liveIncidentRows ?? incidentsQuery.data ?? [];
+  const incidents = useMemo(
+    () =>
+      incidentRows.filter((incident) => {
+        const severityPass = severity === "all" ? true : incident.severity === severity;
+        const categoryPass = category === "all" ? true : incident.category === category;
+        const statusPass = status === "all" ? true : incident.status === status;
+        return severityPass && categoryPass && statusPass;
+      }),
+    [category, incidentRows, severity, status]
+  );
+
   const selectedIncident = useMemo(
-    () => incidentsQuery.data?.find((incident) => incident.id === selectedId) ?? null,
-    [incidentsQuery.data, selectedId]
+    () => incidents.find((incident) => incident.id === selectedId) ?? null,
+    [incidents, selectedId]
   );
 
   const canAck = canAny(["incidents.ack", "incidents.resolve", "incidents.write"]);
   const canResolve = canAny(["incidents.resolve", "incidents.write"]);
+
+  useEffect(() => {
+    setLiveIncidentRows(null);
+    incidentCursorRef.current = undefined;
+  }, [category, severity, siteId, status]);
+
+  useEffect(() => {
+    if (!socket) {
+      return;
+    }
+
+    const mapIncident = (value: unknown): Incident | null => {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const row = value as { id?: unknown };
+      if (typeof row.id !== "string") {
+        return null;
+      }
+      return value as Incident;
+    };
+
+    const onDelta = (payload: LiveDeltaPayload<unknown>) => {
+      setLiveIncidentRows((current) => {
+        const reconciled = reconcileLiveDelta<Incident>({
+          expectedStream: "incidents",
+          envelope: payload,
+          currentCursor: incidentCursorRef.current,
+          currentItems: current ?? incidentsQuery.data ?? [],
+          mapUpsert: mapIncident,
+          sort: (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        });
+        if (!reconciled.applied) {
+          return current;
+        }
+        incidentCursorRef.current = reconciled.cursor;
+        return reconciled.items;
+      });
+    };
+
+    socket.on("delta", onDelta);
+    return () => {
+      socket.off("delta", onDelta);
+    };
+  }, [incidentsQuery.data, socket]);
 
   return (
     <div className="space-y-6">
@@ -183,7 +248,7 @@ export default function IncidentsPage() {
             </tr>
           </THead>
           <tbody>
-            {(incidentsQuery.data ?? []).map((incident) => (
+            {incidents.map((incident) => (
               <Tr key={incident.id} className="cursor-pointer" onClick={() => setSelectedId(incident.id)}>
                 <Td>{incident.severity}</Td>
                 <Td>{incident.category}</Td>

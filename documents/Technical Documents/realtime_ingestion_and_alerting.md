@@ -1,26 +1,53 @@
 # Realtime, Ingestion, and Alerting
 
-## Live Channels
-Server emits tenant-scoped Socket.IO channels:
+## Live Transport (V1 Phase 6)
+Gateway implementation: `apps/api/src/realtime/live.gateway.ts`
+
+Primary protocol:
+- Client sends `subscribe` with `{site_id, streams, cursor?}`.
+- Server validates tenant/site/RBAC and responds with:
+  - `subscribed` (ack + accepted cursor state), or
+  - `subscribe.error` (validation/authz failure).
+- Server delivers stream updates through `delta` envelopes.
+
+Delta streams:
+- `robot_last_state`
+- `incidents`
+- `missions`
+
+Cursor model:
+- Opaque base64url `v=1` cursor (`timestamp + id`).
+- Sorting basis:
+  - `robot_last_state`: `(updatedAt, robotId)`
+  - `incidents`: `(updatedAt, incidentId)`
+  - `missions`: `(updatedAt, missionId)`
+
+Catch-up and snapshots:
+1. On subscribe, server performs per-stream catch-up from supplied cursor.
+2. If cursor is omitted, server sends snapshot batches.
+3. Snapshot batch size defaults to `250`.
+
+Delta coalescing:
+- In-memory pending buffers by `(tenantId, siteId|all, stream)`.
+- Coalescing windows:
+  - robots `250ms`
+  - incidents `500ms`
+  - missions `500ms`
+- Multiple updates for same id collapse to latest upsert before flush.
+
+Dual-mode rollout:
+- `LIVE_UPDATES_MODE=dual` keeps legacy protocol compatibility.
+- Legacy `live.subscribe` clients receive legacy full-array channel payloads.
+- Legacy full-array payloads are scoped to legacy subscribers only.
+- `LIVE_UPDATES_MODE=delta_only` disables legacy full-array broadcasts.
+
+Legacy channel names still emitted in dual mode:
 - `robots.live`
 - `incidents.live`
 - `missions.live`
 - `telemetry.live`
 - `alerts.live`
-- `live.heartbeat` (heartbeat/meta)
-
-Gateway implementation: `apps/api/src/realtime/live.gateway.ts`
-
-`robots.live` source:
-- Primary source: `RobotLastState` read model.
-- Offline status computed at emit time using `SiteSetting.robotOfflineAfterSeconds`.
-- Publish cadence derived from site settings (`robotStatePublishPeriodSeconds`, min across tenant sites, default `2s`).
-
-Connection behavior:
-1. Client provides JWT in `handshake.auth.token` (or Bearer header fallback).
-2. Server verifies token using `JWT_SECRET`.
-3. Socket joins `tenant:{tenantId}` room.
-4. Client may subscribe to channel rooms via `live.subscribe`.
+- `live.heartbeat`
 
 ## Canonical Ingestion Pipeline
 Primary endpoint: `POST /api/ingest/telemetry` in `Phase3Service.ingestTelemetry`.
@@ -112,21 +139,21 @@ Consumer loop: `processIngestionTick()` in `Phase3Service`:
   - Accepted writes update cursor fields (`lastStateTimestamp`, `lastStateSequence`, `lastStateMessageId`).
   - Resolves vendor map binding and transforms incoming pose into RobotOps floorplan space.
   - Appends telemetry points from `payload.metrics`.
-  - Emits `telemetry.live`.
+  - Emits `telemetry.live` (legacy) and `robot_last_state` delta upsert.
   - Does not create incidents.
 - `robot_event`
   - Does not mutate `RobotLastState`.
   - Phase 4 requires `payload.dedupe_key`.
   - Uses semantic dedupe window before incident creation.
   - Creates incident and incident timeline event when `create_incident=true`.
-  - Emits `incidents.live`.
+  - Emits `incidents.live` (legacy) and `incidents` delta upsert.
 - `task_status`
   - Does not mutate `RobotLastState`.
   - Uses semantic dedupe window + task cursor ordering.
   - Updates mission lifecycle fields/timestamps/duration.
   - Appends mission timeline event.
   - Upserts `TaskLastStatus` read-model cursor.
-  - Emits `missions.live`.
+  - Emits `missions.live` (legacy) and `missions` delta upsert.
 
 Failure path:
 - Marks ingestion event `failed`.
@@ -210,4 +237,11 @@ Response includes:
 - NATS connection + stream/subject.
 - Ingestion counts (`queued, processed, failed, deadLetters`).
 - Rollup freshness (`siteHourlyLatest`, `tenantHourlyLatest`, `freshnessSeconds`).
+- Live transport metrics:
+  - `mode`
+  - `connected_clients`
+  - `subscribed_clients`
+  - `delta_messages_sent`, `legacy_messages_sent`
+  - `delta_bytes_sent`, `legacy_bytes_sent`
+  - `last_flush_at`
 - Timescale status from infrastructure checks.

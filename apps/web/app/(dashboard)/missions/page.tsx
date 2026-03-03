@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { missionCreateSchema, type MissionCreateInput } from "@robotops/shared";
@@ -11,11 +11,14 @@ import { Drawer } from "@/components/ui/drawer";
 import { PageTitle } from "@/components/pages/page-title";
 import { useAuthedMutation } from "@/hooks/use-authed-mutation";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
+import { type LiveDeltaPayload, useLiveSocket } from "@/hooks/use-live-socket";
+import { reconcileLiveDelta } from "@/lib/live-reconcile";
 import { useGlobalFilters } from "@/store/use-global-filters";
 import { formatDate } from "@/lib/utils";
 
 interface Mission {
   id: string;
+  createdAt: string;
   name: string;
   type: string;
   priority: string;
@@ -42,19 +45,71 @@ interface Robot {
 
 export default function MissionsPage() {
   const { siteId } = useGlobalFilters();
+  const { socket } = useLiveSocket({
+    siteId,
+    streams: ["missions"]
+  });
   const [view, setView] = useState<"queue" | "kanban" | "calendar" | "table">("table");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [liveMissions, setLiveMissions] = useState<Mission[] | null>(null);
+  const missionCursorRef = useRef<string | undefined>(undefined);
 
   const missionsQuery = useAuthedQuery<Mission[]>(["missions", siteId], `/missions?site_id=${siteId}`);
   const robotsQuery = useAuthedQuery<Robot[]>(["robots-last-state", siteId], `/robots/last_state?site_id=${siteId}`);
+  const missions = liveMissions ?? missionsQuery.data ?? [];
 
   const createMissionMutation = useAuthedMutation<Mission>();
 
   const selectedMission = useMemo(
-    () => missionsQuery.data?.find((mission) => mission.id === selectedId) ?? null,
-    [missionsQuery.data, selectedId]
+    () => missions.find((mission) => mission.id === selectedId) ?? null,
+    [missions, selectedId]
   );
+
+  useEffect(() => {
+    setLiveMissions(null);
+    missionCursorRef.current = undefined;
+  }, [siteId]);
+
+  useEffect(() => {
+    if (!socket) {
+      return;
+    }
+
+    const mapMission = (value: unknown): Mission | null => {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const row = value as { id?: unknown };
+      if (typeof row.id !== "string") {
+        return null;
+      }
+      return value as Mission;
+    };
+
+    const onDelta = (payload: LiveDeltaPayload<unknown>) => {
+      setLiveMissions((current) => {
+        const reconciled = reconcileLiveDelta<Mission>({
+          expectedStream: "missions",
+          envelope: payload,
+          currentCursor: missionCursorRef.current,
+          currentItems: current ?? missionsQuery.data ?? [],
+          mapUpsert: mapMission,
+          sort: (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        });
+        if (!reconciled.applied) {
+          return current;
+        }
+        missionCursorRef.current = reconciled.cursor;
+        return reconciled.items;
+      });
+    };
+
+    socket.on("delta", onDelta);
+    return () => {
+      socket.off("delta", onDelta);
+    };
+  }, [missionsQuery.data, socket]);
 
   const form = useForm<MissionCreateInput>({
     resolver: zodResolver(missionCreateSchema),
@@ -125,7 +180,7 @@ export default function MissionsPage() {
             </tr>
           </THead>
           <tbody>
-            {(missionsQuery.data ?? []).map((mission) => (
+            {missions.map((mission) => (
               <Tr key={mission.id} className="cursor-pointer" onClick={() => setSelectedId(mission.id)}>
                 <Td>{mission.name}</Td>
                 <Td>{mission.type}</Td>

@@ -120,13 +120,13 @@ async function main() {
       {
         tenantId: "t1",
         siteId: "s1",
-        robotOfflineAfterSeconds: 300,
+        robotOfflineAfterSeconds: 7200,
         robotStatePublishPeriodSeconds: 2
       },
       {
         tenantId: "t1",
         siteId: "s2",
-        robotOfflineAfterSeconds: 300,
+        robotOfflineAfterSeconds: 7200,
         robotStatePublishPeriodSeconds: 2
       }
     ]

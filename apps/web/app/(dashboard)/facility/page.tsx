@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardMeta, CardTitle } from "@/components/ui/card";
 import { FacilityMap } from "@/components/pages/facility-map";
 import { PageTitle } from "@/components/pages/page-title";
 import { useAuthedQuery } from "@/hooks/use-authed-query";
-import { useLiveSocket } from "@/hooks/use-live-socket";
+import { type LiveDeltaPayload, useLiveSocket } from "@/hooks/use-live-socket";
+import { reconcileLiveDelta } from "@/lib/live-reconcile";
 import { useGlobalFilters } from "@/store/use-global-filters";
 
 interface Floorplan {
@@ -52,12 +53,16 @@ interface RobotPathResponse {
 
 export default function FacilityPage() {
   const { siteId } = useGlobalFilters();
-  const { socket } = useLiveSocket();
+  const { socket } = useLiveSocket({
+    siteId,
+    streams: ["robot_last_state"]
+  });
   const floorplansQuery = useAuthedQuery<Floorplan[]>(["floorplans", siteId], `/floorplans?site_id=${siteId}`);
   const robotsQuery = useAuthedQuery<Robot[]>(["robots-last-state", siteId], `/robots/last_state?site_id=${siteId}`);
   const assetsQuery = useAuthedQuery<Asset[]>(["assets", siteId], `/rtls/assets?site_id=${siteId}`);
 
   const [liveRobots, setLiveRobots] = useState<Robot[] | null>(null);
+  const robotCursorRef = useRef<string | undefined>(undefined);
   const [selectedFloorplanId, setSelectedFloorplanId] = useState("f1");
   const [showZones, setShowZones] = useState(true);
   const [showRobots, setShowRobots] = useState(true);
@@ -81,21 +86,51 @@ export default function FacilityPage() {
   );
 
   useEffect(() => {
+    setLiveRobots(null);
+    robotCursorRef.current = undefined;
+  }, [siteId]);
+
+  useEffect(() => {
     if (!socket) {
       return;
     }
-    const onRobots = (payload: { data: Array<Robot & { siteId?: string }> }) => {
-      if (siteId === "all") {
-        setLiveRobots(payload.data);
-        return;
+
+    const mapRobot = (value: unknown): Robot | null => {
+      if (!value || typeof value !== "object") {
+        return null;
       }
-      setLiveRobots(payload.data.filter((robot) => robot.siteId === siteId));
+      const row = value as { id?: unknown };
+      if (typeof row.id !== "string") {
+        return null;
+      }
+      return value as Robot;
     };
-    socket.on("robots.live", onRobots);
+
+    const onDelta = (payload: LiveDeltaPayload<unknown>) => {
+      setLiveRobots((current) => {
+        const reconciled = reconcileLiveDelta<Robot>({
+          expectedStream: "robot_last_state",
+          envelope: payload,
+          currentCursor: robotCursorRef.current,
+          currentItems: current ?? robotsQuery.data ?? [],
+          mapUpsert: mapRobot,
+          sort: (left, right) => left.name.localeCompare(right.name)
+        });
+
+        if (!reconciled.applied) {
+          return current;
+        }
+
+        robotCursorRef.current = reconciled.cursor;
+        return reconciled.items;
+      });
+    };
+
+    socket.on("delta", onDelta);
     return () => {
-      socket.off("robots.live", onRobots);
+      socket.off("delta", onDelta);
     };
-  }, [siteId, socket]);
+  }, [robotsQuery.data, socket]);
 
   const floorplans = floorplansQuery.data ?? [];
 

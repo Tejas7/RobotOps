@@ -40,6 +40,16 @@ interface PipelineStatus {
   nats: { connected: boolean; stream: string; subject: string };
   ingestion: { queued: number; processed: number; failed: number; deadLetters: number };
   rollups: { siteHourlyLatest: string | null; tenantHourlyLatest: string | null; freshnessSeconds: number | null };
+  live: {
+    mode: "dual" | "delta_only";
+    connected_clients: number;
+    subscribed_clients: number;
+    delta_messages_sent: number;
+    legacy_messages_sent: number;
+    delta_bytes_sent: number;
+    legacy_bytes_sent: number;
+    last_flush_at: string | null;
+  };
   timescale: { extensionAvailable: boolean; hypertableReady: boolean; continuousAggregates: string[] };
 }
 
@@ -148,7 +158,10 @@ export default function DeveloperPage() {
   const adapterHealthQuery = useAuthedQuery<AdapterHealthItem[]>(["adapter-health"], "/adapters/health");
   const adapterCapturesQuery = useAuthedQuery<AdapterCaptureItem[]>(["adapter-captures"], "/adapters/captures");
   const replayMutation = useAuthedMutation<AdapterReplayResponse>();
-  const { socket, connected } = useLiveSocket();
+  const { socket, connected } = useLiveSocket({
+    siteId: "all",
+    streams: ["robot_last_state", "incidents", "missions"]
+  });
 
   const [selectedEndpoint, setSelectedEndpoint] = useState(REST_ENDPOINTS[0]);
   const [streamLogs, setStreamLogs] = useState<string[]>([]);
@@ -181,15 +194,20 @@ export default function DeveloperPage() {
       return;
     }
 
-    const channels = ["robots.live", "incidents.live", "missions.live", "telemetry.live", "alerts.live"] as const;
-    channels.forEach((channel) => {
-      socket.on(channel, (payload) => {
-        setStreamLogs((current) => [`${channel}: ${JSON.stringify(payload).slice(0, 180)}...`, ...current].slice(0, 20));
-      });
+    socket.on("subscribed", (payload) => {
+      setStreamLogs((current) => [`subscribed: ${JSON.stringify(payload).slice(0, 220)}...`, ...current].slice(0, 20));
+    });
+    socket.on("subscribe.error", (payload) => {
+      setStreamLogs((current) => [`subscribe.error: ${JSON.stringify(payload).slice(0, 220)}...`, ...current].slice(0, 20));
+    });
+    socket.on("delta", (payload) => {
+      setStreamLogs((current) => [`delta: ${JSON.stringify(payload).slice(0, 220)}...`, ...current].slice(0, 20));
     });
 
     return () => {
-      channels.forEach((channel) => socket.off(channel));
+      socket.off("subscribed");
+      socket.off("subscribe.error");
+      socket.off("delta");
     };
   }, [socket]);
 
@@ -281,8 +299,8 @@ export default function DeveloperPage() {
 
       <Card>
         <CardTitle>Pipeline status</CardTitle>
-        <CardMeta>Ingestion, bus, rollup freshness, and Timescale readiness</CardMeta>
-        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-4">
+        <CardMeta>Ingestion, bus, live transport, rollup freshness, and Timescale readiness</CardMeta>
+        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-2xl border border-border bg-surface p-3">
             <p className="font-medium">NATS</p>
             <p className="text-xs text-muted">
@@ -299,6 +317,15 @@ export default function DeveloperPage() {
             <p className="font-medium">Rollups</p>
             <p className="text-xs text-muted">
               freshness {pipelineStatusQuery.data?.rollups.freshnessSeconds ?? "-"}s
+            </p>
+          </div>
+          <div className="rounded-2xl border border-border bg-surface p-3">
+            <p className="font-medium">Live transport</p>
+            <p className="text-xs text-muted">
+              {pipelineStatusQuery.data?.live.mode ?? "dual"} • subs {pipelineStatusQuery.data?.live.subscribed_clients ?? 0}
+            </p>
+            <p className="text-xs text-muted">
+              delta {pipelineStatusQuery.data?.live.delta_messages_sent ?? 0} / legacy {pipelineStatusQuery.data?.live.legacy_messages_sent ?? 0}
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-surface p-3">

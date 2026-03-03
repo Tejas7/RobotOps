@@ -43,8 +43,15 @@ Navigation source: `apps/web/lib/constants.ts`
 Hook: `apps/web/hooks/use-live-socket.ts`
 - Connects to `NEXT_PUBLIC_SOCKET_URL` via Socket.IO.
 - Sends JWT in `auth.token`.
-- Subscribes to channels:
-  - `robots.live`, `incidents.live`, `missions.live`, `telemetry.live`, `alerts.live`.
+- V1 Phase 6 primary subscription protocol:
+  - client emits `subscribe` (`site_id`, `streams`, `cursor`)
+  - server responds with `subscribed` or `subscribe.error`
+  - client receives `delta` envelopes (`stream`, `cursor`, `upserts`, `deletes`, `snapshot`, batching fields)
+- Reconciliation helper:
+  - `apps/web/lib/live-reconcile.ts`
+  - ignores stale/equal cursors and applies id-based upsert/delete merges.
+- Dual-mode compatibility:
+  - legacy channels are still accepted in `dual` mode, but migrated pages consume `delta`.
 
 ## Page-Level Technical Responsibilities
 
@@ -57,7 +64,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
   - Save current view, apply saved view, set role default.
   - Applies role default view if URL has no explicit filter.
   - KPI cards and charts.
-  - Live robot/incident updates.
+  - Live robot/incident updates via `delta` streams (`robot_last_state`, `incidents`).
 
 ### `/fleet`
 - Filtered robot table and robot details drawer.
@@ -69,6 +76,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Features:
   - Telemetry metric/range controls + CSV export.
   - RBAC-aware action controls.
+  - Robot list state reconciles from `robot_last_state` deltas.
 
 ### `/facility`
 - Facility map with layer toggles and playback controls.
@@ -78,12 +86,14 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Features:
   - Path playback scrubber/trails.
   - Proximity event panel.
+  - Robot marker layer reconciles from `robot_last_state` deltas.
 
 ### `/missions`
 - Mission table, mission detail drawer, create-mission drawer.
 - Uses:
   - `/missions`, `/robots/last_state`, `/missions/:id`, `/missions` (POST).
 - Uses shared `missionCreateSchema` for form validation.
+- Mission table state reconciles from `missions` deltas.
 
 ### `/incidents`
 - Incident table + detail drawer with workflows.
@@ -93,6 +103,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Features:
   - Automation hook status panel.
   - Alert escalation timeline panel.
+  - Incident list state reconciles from `incidents` deltas.
 
 ### `/analytics`
 - Dashboard KPIs/charts and export actions.
@@ -125,7 +136,7 @@ Hook: `apps/web/hooks/use-live-socket.ts`
 - Uses:
   - `/api-keys`, `/audit`, `/system/pipeline-status`
 - Features:
-  - WebSocket stream tester log.
+  - WebSocket stream tester log for `subscribed`/`subscribe.error`/`delta`.
   - Structured audit diff drilldown.
   - Token-aware API explorer command snippets including `/robots/last_state`.
 

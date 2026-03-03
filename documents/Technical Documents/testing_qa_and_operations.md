@@ -31,6 +31,8 @@
   - Dedupe window and ordering checks (`robot_event`/`task_status` duplicate suppression, `robot_state` monotonic ordering, sequence validation, and dropped-event audit/dead-letter behavior).
 - `npm run qa:v1:phase5`
   - Adapter capture/manifest listing, deterministic replay stability, replay-run diagnostics persistence, and adapter health endpoint verification.
+- `npm run qa:v1:phase6`
+  - Socket subscribe/authz/cursor snapshot checks, delta upsert verification from canonical ingest, legacy dual-mode behavior checks, and live transport metric validation in `/system/pipeline-status`.
 - `npm run qa:phase1`
   - Core dashboard smoke (overview/fleet/facility + a11y smoke subset).
 - `npm run qa:phase2`
@@ -44,6 +46,7 @@
 - `scripts/v1-phase3-qa.mjs`
 - `scripts/v1-phase4-qa.mjs`
 - `scripts/v1-phase5-qa.mjs`
+- `scripts/v1-phase6-qa.mjs`
 - `scripts/phase1-qa.mjs`
 - `scripts/phase2-qa.mjs`
 - `scripts/phase3-qa.mjs`

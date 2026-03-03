@@ -27,6 +27,7 @@ import {
 } from "@robotops/shared";
 import type { Permission } from "@robotops/shared";
 import type { RequestUser } from "../auth/types";
+import { LiveGateway } from "../realtime/live.gateway";
 import { AuditService } from "./audit.service";
 import { PrismaService } from "./prisma.service";
 
@@ -98,7 +99,8 @@ const DEFAULT_ROBOT_OFFLINE_AFTER_SECONDS = 15;
 export class OpsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(AuditService) private readonly auditService: AuditService
+    @Inject(AuditService) private readonly auditService: AuditService,
+    @Inject(LiveGateway) private readonly live: LiveGateway
   ) {}
 
   async getTenant(tenantId: string) {
@@ -644,6 +646,8 @@ export class OpsService {
       actorId: user.sub
     });
 
+    this.live.publishMissionUpsert(tenantId, mission.siteId, mission.id);
+
     return mission;
   }
 
@@ -728,6 +732,8 @@ export class OpsService {
       actorId: user.sub
     });
 
+    this.live.publishIncidentUpsert(tenantId, updated.siteId, updated.id);
+
     return updated;
   }
 
@@ -782,6 +788,8 @@ export class OpsService {
       actorType: "user",
       actorId: user.sub
     });
+
+    this.live.publishIncidentUpsert(tenantId, updated.siteId, updated.id);
 
     return updated;
   }

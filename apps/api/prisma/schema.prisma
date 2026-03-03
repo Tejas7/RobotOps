@@ -335,12 +335,15 @@ model Mission {
   failureMessage     String?
   lastEventId        String?
   createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
   tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   site               Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
   assignedRobot      Robot?        @relation(fields: [assignedRobotId], references: [id], onDelete: SetNull)
   missionEvents      MissionEvent[]
   incidents          Incident[]
   taskLastStatuses   TaskLastStatus[]
+
+  @@index([tenantId, siteId, updatedAt, id])
 }
 
 model MissionEvent {
@@ -366,6 +369,7 @@ model Incident {
   title          String
   description    String
   createdAt      DateTime
+  updatedAt      DateTime @updatedAt
   acknowledgedBy String?
   resolvedAt     DateTime?
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -373,6 +377,8 @@ model Incident {
   robot          Robot?          @relation(fields: [robotId], references: [id], onDelete: SetNull)
   mission        Mission?        @relation(fields: [missionId], references: [id], onDelete: SetNull)
   timeline       IncidentEvent[]
+
+  @@index([tenantId, siteId, updatedAt, id])
 }
 
 model IncidentEvent {
